@@ -110,12 +110,6 @@ export class ChatHarness {
         const text = chunk.content.toString();
         output += text;
         onChunk(text);
-        this.emit({
-          type: "llm_chunk",
-          callId,
-          content: text,
-          timestamp: Date.now(),
-        });
       }
 
       const response = new AIMessage(output);

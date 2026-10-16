@@ -27,7 +27,9 @@ const activeTab = ref<SideTab>("code");
 const debugEvents = ref<HarnessEvent[]>([]);
 
 harness.subscribe((event) => {
-  debugEvents.value.push(event);
+  if (event.type !== "llm_chunk") {
+    debugEvents.value.push(event);
+  }
 });
 
 const ready = computed(() =>
@@ -60,16 +62,20 @@ const harnessCode = `this.emit({
 });
 
 const stream = await this.model.stream(nextMessages);
+let output = "";
 
 for await (const chunk of stream) {
-  this.emit({ type: "llm_chunk", callId, content: chunk.content });
+  output += chunk.content.toString();
 }
 
-this.emit({ type: "llm_end", callId, message: finalMessage });`;
+this.emit({
+  type: "llm_end",
+  callId,
+  message: finalMessage,
+});`;
 
 function eventTitle(event: HarnessEvent) {
   if (event.type === "llm_start") return `LLM Call #${event.callId}`;
-  if (event.type === "llm_chunk") return `Chunk · Call #${event.callId}`;
   if (event.type === "llm_end") return `LLM Response #${event.callId}`;
   return `LLM Error #${event.callId}`;
 }
@@ -155,7 +161,7 @@ onMounted(async () => {
         <div class="sectionHeader">
           <div>
             <h1>Chat</h1>
-            <p>Streaming through LangChain, with every model call mirrored into the debug timeline.</p>
+            <p>Streaming through LangChain, with model calls and final responses mirrored into Debug.</p>
           </div>
           <span class="step">v2.5 · debug · {{ historySize }} msgs</span>
         </div>
@@ -164,7 +170,7 @@ onMounted(async () => {
           <div v-if="messages.length === 0" class="empty">
             <div class="emptyMark">⌁</div>
             <strong>Send a message, then open Debug.</strong>
-            <span>You’ll see the exact LangChain message history used for that model call.</span>
+            <span>You’ll see the exact LangChain message history and the final model response.</span>
           </div>
 
           <div
@@ -208,7 +214,7 @@ onMounted(async () => {
           <div class="sectionHeader codeHeading">
             <div>
               <h2>Code</h2>
-              <p>v2.5 adds observable harness events without changing the chat behavior.</p>
+              <p>v2.5 keeps streaming live while Debug records only meaningful execution boundaries.</p>
             </div>
           </div>
 
@@ -218,7 +224,7 @@ onMounted(async () => {
           </section>
 
           <section class="codeBlock">
-            <div class="codeBar">2 · ChatHarness · emit execution events</div>
+            <div class="codeBar">2 · ChatHarness · emit call + final response</div>
             <pre><code>{{ harnessCode }}</code></pre>
           </section>
 
@@ -232,7 +238,7 @@ onMounted(async () => {
           <div class="sectionHeader codeHeading debugHeader">
             <div>
               <h2>Debug</h2>
-              <p>What LangChain sends, what Chrome injects, and what comes back.</p>
+              <p>What LangChain sends, what Chrome injects, and the final answer that comes back.</p>
             </div>
             <button class="clearButton" :disabled="debugEvents.length === 0" @click="clearDebug">Clear</button>
           </div>
@@ -267,8 +273,6 @@ onMounted(async () => {
                   <pre>{{ message.content }}</pre>
                 </div>
               </div>
-
-              <pre v-else-if="event.type === 'llm_chunk'" class="chunkText">{{ event.content }}</pre>
 
               <div v-else-if="event.type === 'llm_end'" class="debugMessage">
                 <span>{{ event.message.role }}</span>
