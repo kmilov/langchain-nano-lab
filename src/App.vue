@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
-import { ChromeLanguageModel } from "./ChromeLanguageModel";
+import {
+  ChromeLanguageModelAdapter,
+  type ChromeAvailability,
+} from "./adapters/ChromeLanguageModelAdapter";
 import { ChatHarness } from "./harness";
 
 type Availability = "checking" | "unsupported" | ChromeAvailability;
@@ -9,7 +12,7 @@ type ChatMessage = {
   content: string;
 };
 
-const model = new ChromeLanguageModel({});
+const model = new ChromeLanguageModelAdapter({});
 const harness = new ChatHarness(model);
 
 const availability = ref<Availability>("checking");
@@ -22,7 +25,7 @@ const ready = computed(() =>
   ["available", "downloadable", "downloading"].includes(availability.value),
 );
 
-const adapterCode = `export class ChromeLanguageModel extends BaseChatModel {
+const adapterCode = `export class ChromeLanguageModelAdapter extends BaseChatModel {
   async _generate(messages) {
     const session = await LanguageModel.create();
     const output = await session.prompt(messages);
@@ -171,7 +174,7 @@ onMounted(async () => {
         </div>
 
         <section class="codeBlock">
-          <div class="codeBar">1 · ChromeLanguageModel.ts</div>
+          <div class="codeBar">1 · ChromeLanguageModelAdapter</div>
           <pre><code>{{ adapterCode }}</code></pre>
         </section>
 
