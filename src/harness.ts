@@ -15,6 +15,15 @@ export class ChatHarness {
     return response;
   }
 
+  async stream(input: string, onChunk: (chunk: string) => void) {
+    const nextMessages = [...this.messages, new HumanMessage(input)];
+    const response = await this.model.streamResponse(nextMessages, onChunk);
+
+    this.messages = [...nextMessages, response];
+
+    return response;
+  }
+
   history() {
     return [...this.messages];
   }

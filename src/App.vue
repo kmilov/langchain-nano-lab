@@ -26,34 +26,41 @@ const ready = computed(() =>
   ["available", "downloadable", "downloading"].includes(availability.value),
 );
 
-const adapterCode = `export class ChromeLanguageModelAdapter extends BaseChatModel {
-  async _generate(messages) {
-    const session = await this.createSession();
+const adapterCode = `async streamResponse(messages, onChunk) {
+  const session = await this.createSession();
 
-    try {
-      const chromeMessages = mapToChrome(messages);
-      const output = await session.prompt(chromeMessages);
-      return toChatResult(output);
-    } finally {
-      session.destroy();
+  try {
+    const stream = session.promptStreaming(
+      this.toChromeMessages(messages),
+    );
+
+    let output = "";
+    for await (const chunk of stream) {
+      output += chunk;
+      onChunk(chunk);
     }
+
+    return new AIMessage(output);
+  } finally {
+    session.destroy();
   }
 }`;
 
-const harnessCode = `export class ChatHarness {
-  private messages = [];
+const harnessCode = `async stream(input, onChunk) {
+  const nextMessages = [
+    ...this.messages,
+    new HumanMessage(input),
+  ];
 
-  async run(input) {
-    const nextMessages = [
-      ...this.messages,
-      new HumanMessage(input),
-    ];
+  const response = await this.model.streamResponse(
+    nextMessages,
+    onChunk,
+  );
 
-    const response = await this.model.invoke(nextMessages);
-    this.messages = [...nextMessages, response];
+  // Only the completed response becomes history.
+  this.messages = [...nextMessages, response];
 
-    return response;
-  }
+  return response;
 }`;
 
 async function scrollToBottom() {
@@ -69,21 +76,26 @@ async function sendMessage() {
 
   input.value = "";
   messages.value.push({ role: "user", content: prompt });
+  const assistantIndex = messages.value.push({
+    role: "assistant",
+    content: "",
+  }) - 1;
+
   busy.value = true;
   await scrollToBottom();
 
   try {
-    const result = await harness.run(prompt);
-    historySize.value = harness.history().length;
-    messages.value.push({
-      role: "assistant",
-      content: result.content.toString(),
+    await harness.stream(prompt, (chunk) => {
+      messages.value[assistantIndex].content += chunk;
+      void scrollToBottom();
     });
+
+    historySize.value = harness.history().length;
   } catch (error) {
-    messages.value.push({
+    messages.value[assistantIndex] = {
       role: "error",
       content: error instanceof Error ? error.message : String(error),
-    });
+    };
   } finally {
     busy.value = false;
     await scrollToBottom();
@@ -124,16 +136,16 @@ onMounted(async () => {
         <div class="sectionHeader">
           <div>
             <h1>Chat</h1>
-            <p>The harness owns conversation history and sends it on every model call.</p>
+            <p>Chunks render immediately; only the completed answer is stored in history.</p>
           </div>
-          <span class="step">v1 · history · {{ historySize }} msgs</span>
+          <span class="step">v2 · streaming · {{ historySize }} msgs</span>
         </div>
 
         <div ref="messagesEl" class="messages">
           <div v-if="messages.length === 0" class="empty">
             <div class="emptyMark">⌁</div>
-            <strong>Test the memory.</strong>
-            <span>Try: “My favorite language is Kotlin.” Then ask: “What is my favorite language?”</span>
+            <strong>Watch Nano answer live.</strong>
+            <span>Try a prompt that needs a few sentences so the stream is easy to see.</span>
           </div>
 
           <div
@@ -145,11 +157,7 @@ onMounted(async () => {
             <span class="messageRole">
               {{ message.role === "assistant" ? "Nano" : message.role }}
             </span>
-            <p>{{ message.content }}</p>
-          </div>
-
-          <div v-if="busy" class="message assistant pending">
-            Nano is thinking locally…
+            <p>{{ message.content || (busy && index === messages.length - 1 ? "…" : "") }}</p>
           </div>
         </div>
 
@@ -166,7 +174,7 @@ onMounted(async () => {
             @keydown="onComposerKeydown"
           />
           <button :disabled="busy || !input.trim()" type="submit">
-            {{ busy ? "Running…" : "Send" }}
+            {{ busy ? "Streaming…" : "Send" }}
           </button>
         </form>
       </article>
@@ -175,23 +183,23 @@ onMounted(async () => {
         <div class="sectionHeader codeHeading">
           <div>
             <h2>Code</h2>
-            <p>v1 moves conversation state into the harness instead of the model session.</p>
+            <p>v2 separates transient stream chunks from persistent conversation state.</p>
           </div>
         </div>
 
         <section class="codeBlock">
-          <div class="codeBar">1 · ChromeLanguageModelAdapter · stateless transport</div>
+          <div class="codeBar">1 · ChromeLanguageModelAdapter · stream transport</div>
           <pre><code>{{ adapterCode }}</code></pre>
         </section>
 
         <section class="codeBlock">
-          <div class="codeBar">2 · ChatHarness · conversation owner</div>
+          <div class="codeBar">2 · ChatHarness · persist final response</div>
           <pre><code>{{ harnessCode }}</code></pre>
         </section>
 
         <div class="nextSteps">
           <span>Next</span>
-          <strong>Streaming → one tool → tool loop</strong>
+          <strong>One tool → tool loop</strong>
         </div>
       </aside>
     </section>

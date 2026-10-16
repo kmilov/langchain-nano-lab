@@ -36,6 +36,40 @@ export class ChromeLanguageModelAdapter extends BaseChatModel<BaseChatModelCallO
     });
   }
 
+  private toChromeMessages(messages: BaseMessage[]) {
+    return messages
+      .filter((message) => message.getType() !== "system")
+      .map((message): ChromePrompt => {
+        const type = message.getType();
+        const content = message.content.toString();
+
+        if (type === "human") return { role: "user", content };
+        if (type === "ai") return { role: "assistant", content };
+        throw new Error(`Unsupported LangChain message type: ${type}`);
+      });
+  }
+
+  async streamResponse(
+    messages: BaseMessage[],
+    onChunk: (chunk: string) => void,
+  ): Promise<AIMessage> {
+    const session = await this.createSession();
+
+    try {
+      const stream = session.promptStreaming(this.toChromeMessages(messages));
+      let output = "";
+
+      for await (const chunk of stream) {
+        output += chunk;
+        onChunk(chunk);
+      }
+
+      return new AIMessage(output);
+    } finally {
+      session.destroy();
+    }
+  }
+
   async _generate(
     messages: BaseMessage[],
     _options: BaseChatModelCallOptions,
@@ -43,18 +77,7 @@ export class ChromeLanguageModelAdapter extends BaseChatModel<BaseChatModelCallO
     const session = await this.createSession();
 
     try {
-      const chromeMessages: ChromePrompt[] = messages
-        .filter((message) => message.getType() !== "system")
-        .map((message) => {
-          const type = message.getType();
-          const content = message.content.toString();
-
-          if (type === "human") return { role: "user", content };
-          if (type === "ai") return { role: "assistant", content };
-          throw new Error(`Unsupported LangChain message type: ${type}`);
-        });
-
-      const output = await session.prompt(chromeMessages);
+      const output = await session.prompt(this.toChromeMessages(messages));
 
       return {
         generations: [
