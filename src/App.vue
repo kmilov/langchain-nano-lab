@@ -26,7 +26,7 @@ const ready = computed(() =>
   ["available", "downloadable", "downloading"].includes(availability.value),
 );
 
-const adapterCode = `async streamResponse(messages, onChunk) {
+const adapterCode = `async *_streamResponseChunks(messages) {
   const session = await this.createSession();
 
   try {
@@ -34,13 +34,12 @@ const adapterCode = `async streamResponse(messages, onChunk) {
       this.toChromeMessages(messages),
     );
 
-    let output = "";
     for await (const chunk of stream) {
-      output += chunk;
-      onChunk(chunk);
+      yield new ChatGenerationChunk({
+        text: chunk,
+        message: new AIMessageChunk({ content: chunk }),
+      });
     }
-
-    return new AIMessage(output);
   } finally {
     session.destroy();
   }
@@ -52,12 +51,17 @@ const harnessCode = `async stream(input, onChunk) {
     new HumanMessage(input),
   ];
 
-  const response = await this.model.streamResponse(
-    nextMessages,
-    onChunk,
-  );
+  // Public LangChain API — no Chrome-specific call here.
+  const stream = await this.model.stream(nextMessages);
+  let output = "";
 
-  // Only the completed response becomes history.
+  for await (const chunk of stream) {
+    const text = chunk.content.toString();
+    output += text;
+    onChunk(text);
+  }
+
+  const response = new AIMessage(output);
   this.messages = [...nextMessages, response];
 
   return response;
@@ -136,7 +140,7 @@ onMounted(async () => {
         <div class="sectionHeader">
           <div>
             <h1>Chat</h1>
-            <p>Chunks render immediately; only the completed answer is stored in history.</p>
+            <p>Streaming now flows through LangChain's public model API.</p>
           </div>
           <span class="step">v2 · streaming · {{ historySize }} msgs</span>
         </div>
@@ -183,17 +187,17 @@ onMounted(async () => {
         <div class="sectionHeader codeHeading">
           <div>
             <h2>Code</h2>
-            <p>v2 separates transient stream chunks from persistent conversation state.</p>
+            <p>v2 now stays inside the LangChain BaseChatModel abstraction.</p>
           </div>
         </div>
 
         <section class="codeBlock">
-          <div class="codeBar">1 · ChromeLanguageModelAdapter · stream transport</div>
+          <div class="codeBar">1 · Adapter · implement LangChain streaming</div>
           <pre><code>{{ adapterCode }}</code></pre>
         </section>
 
         <section class="codeBlock">
-          <div class="codeBar">2 · ChatHarness · persist final response</div>
+          <div class="codeBar">2 · ChatHarness · consume model.stream()</div>
           <pre><code>{{ harnessCode }}</code></pre>
         </section>
 

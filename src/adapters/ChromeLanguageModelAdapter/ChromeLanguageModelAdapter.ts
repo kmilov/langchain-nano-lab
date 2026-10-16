@@ -2,8 +2,8 @@ import {
   BaseChatModel,
   type BaseChatModelCallOptions,
 } from "@langchain/core/language_models/chat_models";
-import { AIMessage, type BaseMessage } from "@langchain/core/messages";
-import type { ChatResult } from "@langchain/core/outputs";
+import { AIMessage, AIMessageChunk, type BaseMessage } from "@langchain/core/messages";
+import { ChatGenerationChunk, type ChatResult } from "@langchain/core/outputs";
 import type { ChromePrompt } from "./types";
 
 export const SYSTEM_PROMPT =
@@ -49,22 +49,21 @@ export class ChromeLanguageModelAdapter extends BaseChatModel<BaseChatModelCallO
       });
   }
 
-  async streamResponse(
+  async *_streamResponseChunks(
     messages: BaseMessage[],
-    onChunk: (chunk: string) => void,
-  ): Promise<AIMessage> {
+    _options: BaseChatModelCallOptions,
+  ): AsyncGenerator<ChatGenerationChunk> {
     const session = await this.createSession();
 
     try {
       const stream = session.promptStreaming(this.toChromeMessages(messages));
-      let output = "";
 
       for await (const chunk of stream) {
-        output += chunk;
-        onChunk(chunk);
+        yield new ChatGenerationChunk({
+          text: chunk,
+          message: new AIMessageChunk({ content: chunk }),
+        });
       }
-
-      return new AIMessage(output);
     } finally {
       session.destroy();
     }

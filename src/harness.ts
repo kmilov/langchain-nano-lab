@@ -1,4 +1,4 @@
-import { HumanMessage, type BaseMessage } from "@langchain/core/messages";
+import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messages";
 import { ChromeLanguageModelAdapter } from "./adapters/ChromeLanguageModelAdapter";
 
 export class ChatHarness {
@@ -17,8 +17,16 @@ export class ChatHarness {
 
   async stream(input: string, onChunk: (chunk: string) => void) {
     const nextMessages = [...this.messages, new HumanMessage(input)];
-    const response = await this.model.streamResponse(nextMessages, onChunk);
+    const stream = await this.model.stream(nextMessages);
+    let output = "";
 
+    for await (const chunk of stream) {
+      const text = chunk.content.toString();
+      output += text;
+      onChunk(text);
+    }
+
+    const response = new AIMessage(output);
     this.messages = [...nextMessages, response];
 
     return response;
