@@ -250,6 +250,17 @@ pre {
   max-height: 220px;
   background: #11161e;
 }
+.debugCard > summary {
+  cursor: pointer;
+  list-style: none;
+}
+.debugCard > summary::-webkit-details-marker { display: none; }
+.debugCard > summary::before {
+  content: "▸";
+  margin-right: 8px;
+  color: #77808d;
+}
+.debugCard[open] > summary::before { content: "▾"; }
 .debugMeta {
   padding: 10px 12px;
   display: flex;
@@ -258,6 +269,12 @@ pre {
   align-items: center;
   border-bottom: 1px solid #edf0f4;
   font-size: 11px;
+}
+.debugCard > summary.debugMeta {
+  justify-content: flex-start;
+}
+.debugCard > summary.debugMeta span {
+  margin-left: auto;
 }
 .debugMeta strong { font-size: 12px; }
 .debugMeta span { color: #848c98; }
