@@ -121,7 +121,6 @@ button { cursor: pointer; }
 .message.user { margin-left: auto; background: #eef4ff; border-color: #dbe8ff; }
 .message.assistant { background: #fff; }
 .message.error { background: #fff3f3; border-color: #ffd6d6; color: #9c3030; }
-.pending { color: #737b89; }
 .notice {
   margin: 0 24px 14px;
   padding: 11px 12px;
@@ -165,6 +164,23 @@ button { cursor: pointer; }
   font-weight: 700;
 }
 .composer button:disabled { opacity: .45; cursor: default; }
+.sideTabs {
+  display: flex;
+  gap: 6px;
+  padding: 10px;
+  background: white;
+  border-bottom: 1px solid #e8edf3;
+}
+.sideTabs button {
+  border: 0;
+  background: transparent;
+  color: #6d7582;
+  border-radius: 9px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 750;
+}
+.sideTabs button.active { background: #eef4ff; color: #2164da; }
 .codeBlock {
   margin: 14px 14px 0;
   border-radius: 13px;
@@ -206,6 +222,73 @@ pre {
   color: #798190;
 }
 .nextSteps strong { font-size: 13px; }
+.debugHeader { align-items: center; }
+.clearButton {
+  border: 1px solid #dfe4ec;
+  background: white;
+  color: #555f6e;
+  border-radius: 9px;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.clearButton:disabled { opacity: .4; cursor: default; }
+.debugFeed {
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+  max-height: 680px;
+  overflow: auto;
+}
+.debugCard {
+  border: 1px solid #dfe4ec;
+  border-radius: 12px;
+  background: white;
+  overflow: hidden;
+}
+.debugCard pre {
+  max-height: 220px;
+  background: #11161e;
+}
+.debugMeta {
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid #edf0f4;
+  font-size: 11px;
+}
+.debugMeta strong { font-size: 12px; }
+.debugMeta span { color: #848c98; }
+.systemCard { border-color: #cddcff; }
+.systemCard .debugMeta { background: #eef4ff; }
+.debugMessages { display: grid; }
+.debugMessage { border-bottom: 1px solid #edf0f4; }
+.debugMessage:last-child { border-bottom: 0; }
+.debugMessage > span {
+  display: block;
+  padding: 7px 12px;
+  color: #6f7885;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.debugMessage pre { border-top: 1px solid #edf0f4; }
+.debug-llm_chunk { opacity: .82; }
+.chunkText { max-height: 90px !important; }
+.debug-llm_error { border-color: #ffd6d6; }
+.errorText { color: #ffb1b1; }
+.debugEmpty {
+  padding: 28px 16px;
+  text-align: center;
+  color: #7b8491;
+  font-size: 12px;
+  border: 1px dashed #d7dde6;
+  border-radius: 12px;
+  background: rgba(255,255,255,.7);
+}
 
 @media (max-width: 980px) {
   .shell { padding: 12px; }

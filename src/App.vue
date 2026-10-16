@@ -2,15 +2,17 @@
 import { computed, nextTick, onMounted, ref } from "vue";
 import {
   ChromeLanguageModelAdapter,
+  SYSTEM_PROMPT,
   type ChromeAvailability,
 } from "./adapters/ChromeLanguageModelAdapter";
-import { ChatHarness } from "./harness";
+import { ChatHarness, type HarnessEvent } from "./harness";
 
 type Availability = "checking" | "unsupported" | ChromeAvailability;
 type ChatMessage = {
   role: "user" | "assistant" | "error";
   content: string;
 };
+type SideTab = "code" | "debug";
 
 const model = new ChromeLanguageModelAdapter({});
 const harness = new ChatHarness(model);
@@ -21,6 +23,12 @@ const busy = ref(false);
 const messages = ref<ChatMessage[]>([]);
 const historySize = ref(0);
 const messagesEl = ref<HTMLElement | null>(null);
+const activeTab = ref<SideTab>("code");
+const debugEvents = ref<HarnessEvent[]>([]);
+
+harness.subscribe((event) => {
+  debugEvents.value.push(event);
+});
 
 const ready = computed(() =>
   ["available", "downloadable", "downloading"].includes(availability.value),
@@ -45,27 +53,30 @@ const adapterCode = `async *_streamResponseChunks(messages) {
   }
 }`;
 
-const harnessCode = `async stream(input, onChunk) {
-  const nextMessages = [
-    ...this.messages,
-    new HumanMessage(input),
-  ];
+const harnessCode = `this.emit({
+  type: "llm_start",
+  callId,
+  messages: nextMessages.map(snapshot),
+});
 
-  // Public LangChain API — no Chrome-specific call here.
-  const stream = await this.model.stream(nextMessages);
-  let output = "";
+const stream = await this.model.stream(nextMessages);
 
-  for await (const chunk of stream) {
-    const text = chunk.content.toString();
-    output += text;
-    onChunk(text);
-  }
+for await (const chunk of stream) {
+  this.emit({ type: "llm_chunk", callId, content: chunk.content });
+}
 
-  const response = new AIMessage(output);
-  this.messages = [...nextMessages, response];
+this.emit({ type: "llm_end", callId, message: finalMessage });`;
 
-  return response;
-}`;
+function eventTitle(event: HarnessEvent) {
+  if (event.type === "llm_start") return `LLM Call #${event.callId}`;
+  if (event.type === "llm_chunk") return `Chunk · Call #${event.callId}`;
+  if (event.type === "llm_end") return `LLM Response #${event.callId}`;
+  return `LLM Error #${event.callId}`;
+}
+
+function eventTime(event: HarnessEvent) {
+  return new Date(event.timestamp).toLocaleTimeString();
+}
 
 async function scrollToBottom() {
   await nextTick();
@@ -106,6 +117,10 @@ async function sendMessage() {
   }
 }
 
+function clearDebug() {
+  debugEvents.value = [];
+}
+
 function onComposerKeydown(event: KeyboardEvent) {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
@@ -140,16 +155,16 @@ onMounted(async () => {
         <div class="sectionHeader">
           <div>
             <h1>Chat</h1>
-            <p>Streaming now flows through LangChain's public model API.</p>
+            <p>Streaming through LangChain, with every model call mirrored into the debug timeline.</p>
           </div>
-          <span class="step">v2 · streaming · {{ historySize }} msgs</span>
+          <span class="step">v2.5 · debug · {{ historySize }} msgs</span>
         </div>
 
         <div ref="messagesEl" class="messages">
           <div v-if="messages.length === 0" class="empty">
             <div class="emptyMark">⌁</div>
-            <strong>Watch Nano answer live.</strong>
-            <span>Try a prompt that needs a few sentences so the stream is easy to see.</span>
+            <strong>Send a message, then open Debug.</strong>
+            <span>You’ll see the exact LangChain message history used for that model call.</span>
           </div>
 
           <div
@@ -184,27 +199,86 @@ onMounted(async () => {
       </article>
 
       <aside class="codePane">
-        <div class="sectionHeader codeHeading">
-          <div>
-            <h2>Code</h2>
-            <p>v2 now stays inside the LangChain BaseChatModel abstraction.</p>
+        <div class="sideTabs">
+          <button :class="{ active: activeTab === 'code' }" @click="activeTab = 'code'">Code</button>
+          <button :class="{ active: activeTab === 'debug' }" @click="activeTab = 'debug'">Debug</button>
+        </div>
+
+        <template v-if="activeTab === 'code'">
+          <div class="sectionHeader codeHeading">
+            <div>
+              <h2>Code</h2>
+              <p>v2.5 adds observable harness events without changing the chat behavior.</p>
+            </div>
           </div>
-        </div>
 
-        <section class="codeBlock">
-          <div class="codeBar">1 · Adapter · implement LangChain streaming</div>
-          <pre><code>{{ adapterCode }}</code></pre>
-        </section>
+          <section class="codeBlock">
+            <div class="codeBar">1 · Adapter · LangChain-native streaming</div>
+            <pre><code>{{ adapterCode }}</code></pre>
+          </section>
 
-        <section class="codeBlock">
-          <div class="codeBar">2 · ChatHarness · consume model.stream()</div>
-          <pre><code>{{ harnessCode }}</code></pre>
-        </section>
+          <section class="codeBlock">
+            <div class="codeBar">2 · ChatHarness · emit execution events</div>
+            <pre><code>{{ harnessCode }}</code></pre>
+          </section>
 
-        <div class="nextSteps">
-          <span>Next</span>
-          <strong>One tool → tool loop</strong>
-        </div>
+          <div class="nextSteps">
+            <span>Next</span>
+            <strong>One tool → tool loop</strong>
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="sectionHeader codeHeading debugHeader">
+            <div>
+              <h2>Debug</h2>
+              <p>What LangChain sends, what Chrome injects, and what comes back.</p>
+            </div>
+            <button class="clearButton" :disabled="debugEvents.length === 0" @click="clearDebug">Clear</button>
+          </div>
+
+          <div class="debugFeed">
+            <section class="debugCard systemCard">
+              <div class="debugMeta">
+                <strong>Adapter system prompt</strong>
+                <span>Chrome session initialPrompts</span>
+              </div>
+              <pre>{{ SYSTEM_PROMPT }}</pre>
+            </section>
+
+            <div v-if="debugEvents.length === 0" class="debugEmpty">
+              No model calls yet. Send a chat message to populate the trace.
+            </div>
+
+            <section
+              v-for="(event, index) in debugEvents"
+              :key="`${event.type}-${event.callId}-${index}`"
+              class="debugCard"
+              :class="`debug-${event.type}`"
+            >
+              <div class="debugMeta">
+                <strong>{{ eventTitle(event) }}</strong>
+                <span>{{ eventTime(event) }}</span>
+              </div>
+
+              <div v-if="event.type === 'llm_start'" class="debugMessages">
+                <div v-for="(message, messageIndex) in event.messages" :key="messageIndex" class="debugMessage">
+                  <span>{{ message.role }}</span>
+                  <pre>{{ message.content }}</pre>
+                </div>
+              </div>
+
+              <pre v-else-if="event.type === 'llm_chunk'" class="chunkText">{{ event.content }}</pre>
+
+              <div v-else-if="event.type === 'llm_end'" class="debugMessage">
+                <span>{{ event.message.role }}</span>
+                <pre>{{ event.message.content }}</pre>
+              </div>
+
+              <pre v-else class="errorText">{{ event.error }}</pre>
+            </section>
+          </div>
+        </template>
       </aside>
     </section>
   </main>
