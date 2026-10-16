@@ -23,6 +23,8 @@ export interface ChromeLanguageModelFactory {
     expectedOutputs?: Array<{ type: "text"; languages?: string[] }>;
   }): Promise<ChromeAvailability>;
 
+  params?(): Promise<Record<string, unknown>>;
+
   create(options?: {
     initialPrompts?: ChromePrompt[];
     expectedInputs?: Array<{ type: "text"; languages?: string[] }>;

@@ -13,6 +13,7 @@ type ChatMessage = {
   content: string;
 };
 type SideTab = "code" | "debug";
+type ModelParamsStatus = "loading" | "available" | "unsupported" | "error";
 type DebugCall = {
   callId: number;
   start?: Extract<HarnessEvent, { type: "llm_start" }>;
@@ -31,6 +32,9 @@ const historySize = ref(0);
 const messagesEl = ref<HTMLElement | null>(null);
 const activeTab = ref<SideTab>("code");
 const debugEvents = ref<HarnessEvent[]>([]);
+const modelParamsStatus = ref<ModelParamsStatus>("loading");
+const modelParams = ref<Record<string, unknown> | null>(null);
+const modelParamsError = ref("");
 
 harness.subscribe((event) => {
   if (event.type !== "llm_chunk") {
@@ -41,6 +45,15 @@ harness.subscribe((event) => {
 const ready = computed(() =>
   ["available", "downloadable", "downloading"].includes(availability.value),
 );
+
+const modelParamsText = computed(() => {
+  if (modelParamsStatus.value === "loading") return "Loading LanguageModel.params()…";
+  if (modelParamsStatus.value === "unsupported") {
+    return "LanguageModel.params() is not exposed by this browser build.";
+  }
+  if (modelParamsStatus.value === "error") return modelParamsError.value;
+  return JSON.stringify(modelParams.value, null, 2);
+});
 
 const debugCalls = computed<DebugCall[]>(() => {
   const calls = new Map<number, DebugCall>();
@@ -100,6 +113,21 @@ function eventTime(event: HarnessEvent) {
   return new Date(event.timestamp).toLocaleTimeString();
 }
 
+async function loadModelParams() {
+  if (!("LanguageModel" in globalThis) || typeof LanguageModel.params !== "function") {
+    modelParamsStatus.value = "unsupported";
+    return;
+  }
+
+  try {
+    modelParams.value = await LanguageModel.params();
+    modelParamsStatus.value = "available";
+  } catch (error) {
+    modelParamsError.value = error instanceof Error ? error.message : String(error);
+    modelParamsStatus.value = "error";
+  }
+}
+
 async function scrollToBottom() {
   await nextTick();
   if (messagesEl.value) {
@@ -151,6 +179,8 @@ function onComposerKeydown(event: KeyboardEvent) {
 }
 
 onMounted(async () => {
+  void loadModelParams();
+
   try {
     availability.value = await model.availability();
   } catch {
@@ -266,6 +296,14 @@ onMounted(async () => {
                 <span>Chrome session initialPrompts</span>
               </div>
               <pre>{{ SYSTEM_PROMPT }}</pre>
+            </section>
+
+            <section class="debugCard">
+              <div class="debugMeta">
+                <strong>LanguageModel.params()</strong>
+                <span>{{ modelParamsStatus }}</span>
+              </div>
+              <pre>{{ modelParamsText }}</pre>
             </section>
 
             <div v-if="debugCalls.length === 0" class="debugEmpty">
