@@ -13,6 +13,12 @@ type ChatMessage = {
   content: string;
 };
 type SideTab = "code" | "debug";
+type DebugCall = {
+  callId: number;
+  start?: Extract<HarnessEvent, { type: "llm_start" }>;
+  end?: Extract<HarnessEvent, { type: "llm_end" }>;
+  error?: Extract<HarnessEvent, { type: "llm_error" }>;
+};
 
 const model = new ChromeLanguageModelAdapter({});
 const harness = new ChatHarness(model);
@@ -35,6 +41,22 @@ harness.subscribe((event) => {
 const ready = computed(() =>
   ["available", "downloadable", "downloading"].includes(availability.value),
 );
+
+const debugCalls = computed<DebugCall[]>(() => {
+  const calls = new Map<number, DebugCall>();
+
+  for (const event of debugEvents.value) {
+    const call = calls.get(event.callId) ?? { callId: event.callId };
+
+    if (event.type === "llm_start") call.start = event;
+    if (event.type === "llm_end") call.end = event;
+    if (event.type === "llm_error") call.error = event;
+
+    calls.set(event.callId, call);
+  }
+
+  return [...calls.values()];
+});
 
 const adapterCode = `async *_streamResponseChunks(messages) {
   const session = await this.createSession();
@@ -73,12 +95,6 @@ this.emit({
   callId,
   message: finalMessage,
 });`;
-
-function eventTitle(event: HarnessEvent) {
-  if (event.type === "llm_start") return `LLM Call #${event.callId}`;
-  if (event.type === "llm_end") return `LLM Response #${event.callId}`;
-  return `LLM Error #${event.callId}`;
-}
 
 function eventTime(event: HarnessEvent) {
   return new Date(event.timestamp).toLocaleTimeString();
@@ -238,7 +254,7 @@ onMounted(async () => {
           <div class="sectionHeader codeHeading debugHeader">
             <div>
               <h2>Debug</h2>
-              <p>What LangChain sends, what Chrome injects, and the final answer that comes back.</p>
+              <p>Each fold groups one LLM call with its input and final result.</p>
             </div>
             <button class="clearButton" :disabled="debugEvents.length === 0" @click="clearDebug">Clear</button>
           </div>
@@ -252,35 +268,46 @@ onMounted(async () => {
               <pre>{{ SYSTEM_PROMPT }}</pre>
             </section>
 
-            <div v-if="debugEvents.length === 0" class="debugEmpty">
+            <div v-if="debugCalls.length === 0" class="debugEmpty">
               No model calls yet. Send a chat message to populate the trace.
             </div>
 
-            <section
-              v-for="(event, index) in debugEvents"
-              :key="`${event.type}-${event.callId}-${index}`"
+            <details
+              v-for="call in debugCalls"
+              :key="call.callId"
               class="debugCard"
-              :class="`debug-${event.type}`"
+              open
             >
-              <div class="debugMeta">
-                <strong>{{ eventTitle(event) }}</strong>
-                <span>{{ eventTime(event) }}</span>
-              </div>
+              <summary class="debugMeta">
+                <strong>LLM Call #{{ call.callId }}</strong>
+                <span>
+                  {{ call.error ? "error" : call.end ? "complete" : "running" }}
+                  · {{ call.start ? eventTime(call.start) : "" }}
+                </span>
+              </summary>
 
-              <div v-if="event.type === 'llm_start'" class="debugMessages">
-                <div v-for="(message, messageIndex) in event.messages" :key="messageIndex" class="debugMessage">
+              <div v-if="call.start" class="debugMessages">
+                <div class="debugMeta">
+                  <strong>Input messages</strong>
+                  <span>{{ call.start.messages.length }} messages</span>
+                </div>
+                <div
+                  v-for="(message, messageIndex) in call.start.messages"
+                  :key="messageIndex"
+                  class="debugMessage"
+                >
                   <span>{{ message.role }}</span>
                   <pre>{{ message.content }}</pre>
                 </div>
               </div>
 
-              <div v-else-if="event.type === 'llm_end'" class="debugMessage">
-                <span>{{ event.message.role }}</span>
-                <pre>{{ event.message.content }}</pre>
+              <div v-if="call.end" class="debugMessage">
+                <span>final {{ call.end.message.role }}</span>
+                <pre>{{ call.end.message.content }}</pre>
               </div>
 
-              <pre v-else class="errorText">{{ event.error }}</pre>
-            </section>
+              <pre v-if="call.error" class="errorText">{{ call.error.error }}</pre>
+            </details>
           </div>
         </template>
       </aside>
