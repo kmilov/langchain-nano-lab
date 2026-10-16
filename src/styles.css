@@ -6,18 +6,27 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; }
+html, body, #app { height: 100%; }
+body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; }
 button, textarea { font: inherit; }
 button { cursor: pointer; }
 
-.shell { min-height: 100vh; padding: 22px; }
+.shell {
+  height: 100vh;
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .topbar {
+  width: 100%;
   max-width: 1480px;
   margin: 0 auto 18px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  flex: 0 0 auto;
 }
 .brand { font-weight: 760; font-size: 18px; letter-spacing: -0.02em; }
 .subtitle { color: #717987; margin-top: 3px; font-size: 13px; }
@@ -40,22 +49,32 @@ button { cursor: pointer; }
 .status-unsupported .dot { background: #d84949; }
 
 .workspace {
+  width: 100%;
   max-width: 1480px;
   margin: 0 auto;
-  min-height: calc(100vh - 96px);
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1.08fr) minmax(460px, .92fr);
   gap: 14px;
 }
 .chatPane, .codePane {
+  min-height: 0;
+  height: 100%;
   border: 1px solid #dfe4ec;
   border-radius: 18px;
   background: white;
   overflow: hidden;
   box-shadow: 0 12px 40px rgba(29, 38, 57, .06);
 }
-.chatPane { display: flex; flex-direction: column; min-height: 720px; }
-.codePane { padding-bottom: 14px; background: #f8fafc; }
+.chatPane { display: flex; flex-direction: column; }
+.codePane {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 14px;
+  background: #f8fafc;
+  overflow-y: auto;
+}
 .sectionHeader {
   padding: 22px 24px 18px;
   border-bottom: 1px solid #ebeff4;
@@ -63,6 +82,7 @@ button { cursor: pointer; }
   justify-content: space-between;
   gap: 18px;
   align-items: flex-start;
+  flex: 0 0 auto;
 }
 .sectionHeader h1, .sectionHeader h2 { margin: 0; font-size: 20px; letter-spacing: -0.025em; }
 .sectionHeader p { margin: 5px 0 0; color: #737b89; font-size: 13px; line-height: 1.45; }
@@ -76,7 +96,7 @@ button { cursor: pointer; }
   white-space: nowrap;
 }
 .codeHeading { background: white; }
-.messages { flex: 1; padding: 28px; overflow: auto; }
+.messages { flex: 1 1 auto; min-height: 0; padding: 28px; overflow-y: auto; }
 .empty {
   height: 100%;
   min-height: 370px;
@@ -130,6 +150,7 @@ button { cursor: pointer; }
   font-size: 12px;
   line-height: 1.45;
   border: 1px solid #f5dfa7;
+  flex: 0 0 auto;
 }
 .composer {
   border-top: 1px solid #ebeff4;
@@ -139,6 +160,7 @@ button { cursor: pointer; }
   gap: 10px;
   align-items: end;
   background: #fbfcfe;
+  flex: 0 0 auto;
 }
 .composer textarea {
   resize: none;
@@ -170,6 +192,7 @@ button { cursor: pointer; }
   padding: 10px;
   background: white;
   border-bottom: 1px solid #e8edf3;
+  flex: 0 0 auto;
 }
 .sideTabs button {
   border: 0;
@@ -187,6 +210,7 @@ button { cursor: pointer; }
   overflow: hidden;
   background: #11161e;
   border: 1px solid #202a37;
+  flex: 0 0 auto;
 }
 .codeBar {
   padding: 9px 12px;
@@ -213,6 +237,7 @@ pre {
   padding: 14px;
   display: grid;
   gap: 4px;
+  flex: 0 0 auto;
 }
 .nextSteps span {
   font-size: 10px;
@@ -237,8 +262,10 @@ pre {
   padding: 14px;
   display: grid;
   gap: 10px;
-  max-height: 680px;
-  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
 }
 .debugCard {
   border: 1px solid #dfe4ec;
@@ -308,9 +335,12 @@ pre {
 }
 
 @media (max-width: 980px) {
-  .shell { padding: 12px; }
-  .workspace { grid-template-columns: 1fr; }
+  body { overflow: auto; }
+  .shell { height: auto; min-height: 100vh; padding: 12px; overflow: visible; }
+  .workspace { grid-template-columns: 1fr; min-height: auto; }
+  .chatPane, .codePane { height: auto; }
   .chatPane { min-height: 620px; }
+  .codePane { max-height: 720px; }
 }
 
 @media (max-width: 620px) {
