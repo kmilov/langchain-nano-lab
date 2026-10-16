@@ -1,8 +1,8 @@
 import { HumanMessage } from "@langchain/core/messages";
-import { ChromeLanguageModel } from "./ChromeLanguageModel";
+import { ChromeLanguageModelAdapter } from "./adapters/ChromeLanguageModelAdapter";
 
 export class ChatHarness {
-  constructor(private readonly model: ChromeLanguageModel) {}
+  constructor(private readonly model: ChromeLanguageModelAdapter) {}
 
   async run(input: string) {
     return this.model.invoke([new HumanMessage(input)]);
