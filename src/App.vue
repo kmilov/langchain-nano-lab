@@ -19,6 +19,7 @@ const availability = ref<Availability>("checking");
 const input = ref("");
 const busy = ref(false);
 const messages = ref<ChatMessage[]>([]);
+const historySize = ref(0);
 const messagesEl = ref<HTMLElement | null>(null);
 
 const ready = computed(() =>
@@ -27,27 +28,31 @@ const ready = computed(() =>
 
 const adapterCode = `export class ChromeLanguageModelAdapter extends BaseChatModel {
   async _generate(messages) {
-    const session = await LanguageModel.create();
-    const output = await session.prompt(messages);
+    const session = await this.createSession();
 
-    return {
-      generations: [{
-        text: output,
-        message: new AIMessage(output),
-      }],
-    };
+    try {
+      const chromeMessages = mapToChrome(messages);
+      const output = await session.prompt(chromeMessages);
+      return toChatResult(output);
+    } finally {
+      session.destroy();
+    }
   }
 }`;
 
 const harnessCode = `export class ChatHarness {
-  constructor(model) {
-    this.model = model;
-  }
+  private messages = [];
 
-  run(input) {
-    return this.model.invoke([
+  async run(input) {
+    const nextMessages = [
+      ...this.messages,
       new HumanMessage(input),
-    ]);
+    ];
+
+    const response = await this.model.invoke(nextMessages);
+    this.messages = [...nextMessages, response];
+
+    return response;
   }
 }`;
 
@@ -69,6 +74,7 @@ async function sendMessage() {
 
   try {
     const result = await harness.run(prompt);
+    historySize.value = harness.history().length;
     messages.value.push({
       role: "assistant",
       content: result.content.toString(),
@@ -118,16 +124,16 @@ onMounted(async () => {
         <div class="sectionHeader">
           <div>
             <h1>Chat</h1>
-            <p>Chrome LanguageModel API → LangChain adapter → harness → Vue.</p>
+            <p>The harness owns conversation history and sends it on every model call.</p>
           </div>
-          <span class="step">v0 · invoke()</span>
+          <span class="step">v1 · history · {{ historySize }} msgs</span>
         </div>
 
         <div ref="messagesEl" class="messages">
           <div v-if="messages.length === 0" class="empty">
             <div class="emptyMark">⌁</div>
-            <strong>Start with one prompt.</strong>
-            <span>Try: “Explain dependency inversion in one paragraph.”</span>
+            <strong>Test the memory.</strong>
+            <span>Try: “My favorite language is Kotlin.” Then ask: “What is my favorite language?”</span>
           </div>
 
           <div
@@ -169,23 +175,23 @@ onMounted(async () => {
         <div class="sectionHeader codeHeading">
           <div>
             <h2>Code</h2>
-            <p>The UI is compiled by Vite; LangChain is installed from npm.</p>
+            <p>v1 moves conversation state into the harness instead of the model session.</p>
           </div>
         </div>
 
         <section class="codeBlock">
-          <div class="codeBar">1 · ChromeLanguageModelAdapter</div>
+          <div class="codeBar">1 · ChromeLanguageModelAdapter · stateless transport</div>
           <pre><code>{{ adapterCode }}</code></pre>
         </section>
 
         <section class="codeBlock">
-          <div class="codeBar">2 · harness.ts</div>
+          <div class="codeBar">2 · ChatHarness · conversation owner</div>
           <pre><code>{{ harnessCode }}</code></pre>
         </section>
 
         <div class="nextSteps">
           <span>Next</span>
-          <strong>Conversation history → streaming → one tool → tool loop</strong>
+          <strong>Streaming → one tool → tool loop</strong>
         </div>
       </aside>
     </section>

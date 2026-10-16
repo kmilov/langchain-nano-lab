@@ -4,17 +4,12 @@ import {
 } from "@langchain/core/language_models/chat_models";
 import { AIMessage, type BaseMessage } from "@langchain/core/messages";
 import type { ChatResult } from "@langchain/core/outputs";
-import type {
-  ChromeLanguageModelSession,
-  ChromePrompt,
-} from "./types";
+import type { ChromePrompt } from "./types";
 
 export const SYSTEM_PROMPT =
   "You are a concise programming assistant. Prefer short, precise explanations.";
 
 export class ChromeLanguageModelAdapter extends BaseChatModel<BaseChatModelCallOptions> {
-  private session?: ChromeLanguageModelSession;
-
   _llmType() {
     return "chrome-gemini-nano";
   }
@@ -28,49 +23,49 @@ export class ChromeLanguageModelAdapter extends BaseChatModel<BaseChatModelCallO
     });
   }
 
-  private async getSession() {
-    if (this.session) return this.session;
-
+  private async createSession() {
     const availability = await this.availability();
     if (availability === "unsupported" || availability === "unavailable") {
       throw new Error("Chrome LanguageModel API is not available in this browser.");
     }
 
-    this.session = await LanguageModel.create({
+    return LanguageModel.create({
       initialPrompts: [{ role: "system", content: SYSTEM_PROMPT }],
       expectedInputs: [{ type: "text", languages: ["en"] }],
       expectedOutputs: [{ type: "text", languages: ["en"] }],
     });
-
-    return this.session;
   }
 
   async _generate(
     messages: BaseMessage[],
     _options: BaseChatModelCallOptions,
   ): Promise<ChatResult> {
-    const session = await this.getSession();
+    const session = await this.createSession();
 
-    const chromeMessages: ChromePrompt[] = messages
-      .filter((message) => message.getType() !== "system")
-      .map((message) => {
-        const type = message.getType();
-        const content = message.content.toString();
+    try {
+      const chromeMessages: ChromePrompt[] = messages
+        .filter((message) => message.getType() !== "system")
+        .map((message) => {
+          const type = message.getType();
+          const content = message.content.toString();
 
-        if (type === "human") return { role: "user", content };
-        if (type === "ai") return { role: "assistant", content };
-        throw new Error(`Unsupported LangChain message type: ${type}`);
-      });
+          if (type === "human") return { role: "user", content };
+          if (type === "ai") return { role: "assistant", content };
+          throw new Error(`Unsupported LangChain message type: ${type}`);
+        });
 
-    const output = await session.prompt(chromeMessages);
+      const output = await session.prompt(chromeMessages);
 
-    return {
-      generations: [
-        {
-          text: output,
-          message: new AIMessage(output),
-        },
-      ],
-    };
+      return {
+        generations: [
+          {
+            text: output,
+            message: new AIMessage(output),
+          },
+        ],
+      };
+    } finally {
+      session.destroy();
+    }
   }
 }
