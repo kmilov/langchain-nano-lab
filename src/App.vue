@@ -7,6 +7,7 @@ import {
 } from "./adapters/ChromeLanguageModelAdapter";
 import { ChatHarness, type HarnessEvent } from "./harness";
 import type { ModelContextUsage } from "./model/capabilities";
+import { calculatorTool } from "./tools/calculator";
 
 type Availability = "checking" | "unsupported" | ChromeAvailability;
 type ChatMessage = {
@@ -23,7 +24,7 @@ type DebugCall = {
 };
 
 const model = new ChromeLanguageModelAdapter({});
-const harness = new ChatHarness(model);
+const harness = new ChatHarness(model, calculatorTool);
 
 const availability = ref<Availability>("checking");
 const input = ref("");
