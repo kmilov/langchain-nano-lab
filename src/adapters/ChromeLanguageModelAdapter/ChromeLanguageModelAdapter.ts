@@ -55,17 +55,14 @@ export class ChromeLanguageModelAdapter
   }
 
   private toInitialPrompts(messages: BaseMessage[]): ChromePrompt[] {
-    const dynamicSystemPrompts = messages
+    const dynamicSystemContent = messages
       .filter((message) => message.getType() === "system")
-      .map((message): ChromePrompt => ({
-        role: "system",
-        content: message.content.toString(),
-      }));
+      .map((message) => message.content.toString())
+      .filter(Boolean);
 
-    return [
-      { role: "system", content: SYSTEM_PROMPT },
-      ...dynamicSystemPrompts,
-    ];
+    const content = [SYSTEM_PROMPT, ...dynamicSystemContent].join("\n\n");
+
+    return [{ role: "system", content }];
   }
 
   private async createSession(messages: BaseMessage[]) {
