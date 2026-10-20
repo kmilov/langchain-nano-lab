@@ -21,6 +21,8 @@ type DebugCall = {
   start?: Extract<HarnessEvent, { type: "llm_start" }>;
   end?: Extract<HarnessEvent, { type: "llm_end" }>;
   error?: Extract<HarnessEvent, { type: "llm_error" }>;
+  toolStart?: Extract<HarnessEvent, { type: "tool_start" }>;
+  toolEnd?: Extract<HarnessEvent, { type: "tool_end" }>;
 };
 
 const model = new ChromeLanguageModelAdapter({});
@@ -79,6 +81,8 @@ const debugCalls = computed<DebugCall[]>(() => {
     if (event.type === "llm_start") call.start = event;
     if (event.type === "llm_end") call.end = event;
     if (event.type === "llm_error") call.error = event;
+    if (event.type === "tool_start") call.toolStart = event;
+    if (event.type === "tool_end") call.toolEnd = event;
 
     calls.set(event.callId, call);
   }
@@ -87,7 +91,7 @@ const debugCalls = computed<DebugCall[]>(() => {
 });
 
 const adapterCode = `async *_streamResponseChunks(messages) {
-  const session = await this.createSession();
+  const session = await this.createSession(messages);
 
   try {
     const stream = session.promptStreaming(
@@ -105,24 +109,16 @@ const adapterCode = `async *_streamResponseChunks(messages) {
   }
 }`;
 
-const harnessCode = `this.emit({
-  type: "llm_start",
-  callId,
-  messages: nextMessages.map(snapshot),
-});
+const harnessCode = `const toolCall = parseToolCall(firstResponse);
 
-const stream = await this.model.stream(nextMessages);
-let output = "";
-
-for await (const chunk of stream) {
-  output += chunk.content.toString();
-}
-
-this.emit({
-  type: "llm_end",
-  callId,
-  message: finalMessage,
-});`;
+if (toolCall) {
+  const toolMessage = await executeTool(toolCall);
+  const finalResponse = await model.stream([
+    ...messages,
+    firstResponse,
+    toolMessage,
+  ]);
+}`;
 
 function eventTime(event: HarnessEvent) {
   return new Date(event.timestamp).toLocaleTimeString();
@@ -230,19 +226,19 @@ onMounted(async () => {
         <div class="sectionHeader">
           <div>
             <h1>Chat</h1>
-            <p>Streaming through LangChain, with model calls and final responses mirrored into Debug.</p>
+            <p>Streaming through LangChain, with one tool handled by the Harness.</p>
           </div>
           <div class="headerBadges">
             <span class="contextUsageLabel">{{ contextUsageLabel }}</span>
-            <span class="step">v2.5 · debug · {{ historySize }} msgs</span>
+            <span class="step">v3 · one tool · {{ historySize }} msgs</span>
           </div>
         </div>
 
         <div ref="messagesEl" class="messages">
           <div v-if="messages.length === 0" class="empty">
             <div class="emptyMark">⌁</div>
-            <strong>Send a message, then open Debug.</strong>
-            <span>You’ll see the exact LangChain message history and the final model response.</span>
+            <strong>Try: “What is 37 × 19?”</strong>
+            <span>Open Debug to see the hidden tool request, execution, and second model call.</span>
           </div>
 
           <div
@@ -286,7 +282,7 @@ onMounted(async () => {
           <div class="sectionHeader codeHeading">
             <div>
               <h2>Code</h2>
-              <p>v2.5 keeps streaming live while Debug records only meaningful execution boundaries.</p>
+              <p>v3 adds one deterministic tool and one model → tool → model path.</p>
             </div>
           </div>
 
@@ -296,13 +292,13 @@ onMounted(async () => {
           </section>
 
           <section class="codeBlock">
-            <div class="codeBar">2 · ChatHarness · emit call + final response</div>
+            <div class="codeBar">2 · ChatHarness · one-tool execution</div>
             <pre><code>{{ harnessCode }}</code></pre>
           </section>
 
           <div class="nextSteps">
             <span>Next</span>
-            <strong>One tool → tool loop</strong>
+            <strong>v4 · generalize one tool into a tool loop</strong>
           </div>
         </template>
 
@@ -310,7 +306,7 @@ onMounted(async () => {
           <div class="sectionHeader codeHeading debugHeader">
             <div>
               <h2>Debug</h2>
-              <p>Each fold groups one LLM call with its input and final result.</p>
+              <p>Model calls and hidden tool execution are visible here.</p>
             </div>
             <button class="clearButton" :disabled="debugEvents.length === 0" @click="clearDebug">Clear</button>
           </div>
@@ -368,6 +364,16 @@ onMounted(async () => {
               <div v-if="call.end" class="debugMessage">
                 <span>final {{ call.end.message.role }}</span>
                 <pre>{{ call.end.message.content }}</pre>
+              </div>
+
+              <div v-if="call.toolStart" class="debugMessage">
+                <span>tool · {{ call.toolStart.tool }} · args</span>
+                <pre>{{ JSON.stringify(call.toolStart.args, null, 2) }}</pre>
+              </div>
+
+              <div v-if="call.toolEnd" class="debugMessage">
+                <span>tool · {{ call.toolEnd.tool }} · result</span>
+                <pre>{{ call.toolEnd.result }}</pre>
               </div>
 
               <pre v-if="call.error" class="errorText">{{ call.error.error }}</pre>
