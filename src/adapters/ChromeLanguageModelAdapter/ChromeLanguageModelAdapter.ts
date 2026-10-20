@@ -54,14 +54,28 @@ export class ChromeLanguageModelAdapter
     this.lastContextUsage = { usedTokens, maxTokens };
   }
 
-  private async createSession() {
+  private toInitialPrompts(messages: BaseMessage[]): ChromePrompt[] {
+    const dynamicSystemPrompts = messages
+      .filter((message) => message.getType() === "system")
+      .map((message): ChromePrompt => ({
+        role: "system",
+        content: message.content.toString(),
+      }));
+
+    return [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...dynamicSystemPrompts,
+    ];
+  }
+
+  private async createSession(messages: BaseMessage[]) {
     const availability = await this.availability();
     if (availability === "unsupported" || availability === "unavailable") {
       throw new Error("Chrome LanguageModel API is not available in this browser.");
     }
 
     return LanguageModel.create({
-      initialPrompts: [{ role: "system", content: SYSTEM_PROMPT }],
+      initialPrompts: this.toInitialPrompts(messages),
       expectedInputs: [{ type: "text", languages: ["en"] }],
       expectedOutputs: [{ type: "text", languages: ["en"] }],
     });
@@ -69,7 +83,7 @@ export class ChromeLanguageModelAdapter
 
   private toChromeMessages(messages: BaseMessage[]) {
     return messages
-      .filter((message) => message.getType() !== "system") // filter the systme messages because we always send it
+      .filter((message) => message.getType() !== "system")
       .map((message): ChromePrompt => {
         const type = message.getType();
         const content = message.content.toString();
@@ -84,7 +98,7 @@ export class ChromeLanguageModelAdapter
     messages: BaseMessage[],
     _options: BaseChatModelCallOptions,
   ): AsyncGenerator<ChatGenerationChunk> {
-    const session = await this.createSession();
+    const session = await this.createSession(messages);
 
     try {
       // messages array comes as LangChain messages,
@@ -108,7 +122,7 @@ export class ChromeLanguageModelAdapter
     messages: BaseMessage[],
     _options: BaseChatModelCallOptions,
   ): Promise<ChatResult> {
-    const session = await this.createSession();
+    const session = await this.createSession(messages);
 
     try {
       const output = await session.prompt(this.toChromeMessages(messages));
