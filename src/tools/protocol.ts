@@ -23,8 +23,14 @@ export function toolInstructions(tool: StructuredToolInterface): string {
   ].join("\n");
 }
 
-export function parseToolCall(content: string): ToolCallRequest | null {
+function stripOptionalCodeFence(content: string) {
   const text = content.trim();
+  const match = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return match ? match[1].trim() : text;
+}
+
+export function parseToolCall(content: string): ToolCallRequest | null {
+  const text = stripOptionalCodeFence(content);
   if (!text.startsWith("{") || !text.endsWith("}")) return null;
 
   try {
