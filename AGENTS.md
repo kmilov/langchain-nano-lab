@@ -97,7 +97,7 @@ This class is expected to become the tiny agent runtime later, so future respons
 - persistence
 - richer execution events
 
-### `src/modelCapabilities.ts`
+### `src/model/capabilities.ts`
 
 Contains small provider-neutral optional capabilities that are not part of LangChain's generic chat-model contract.
 
@@ -433,14 +433,15 @@ src/
       ChromeLanguageModelAdapter.ts
       types.ts
       index.ts
+  model/
+    capabilities.ts
   App.vue
   harness.ts
-  modelCapabilities.ts
   main.ts
   styles.css
 ```
 
-Keep Chrome-specific types and logic inside the adapter folder where possible. Cross-provider optional model capabilities belong in `modelCapabilities.ts`, not in Vue.
+Keep Chrome-specific types and logic inside the adapter folder where possible. Cross-provider optional model capabilities belong in `src/model/`, not in Vue or a provider adapter folder.
 
 ---
 

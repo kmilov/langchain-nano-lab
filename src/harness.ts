@@ -6,7 +6,7 @@ import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messa
 import type {
   ContextUsageProvider,
   ModelContextUsage,
-} from "./modelCapabilities";
+} from "./model/capabilities";
 
 export type MessageSnapshot = {
   role: string;

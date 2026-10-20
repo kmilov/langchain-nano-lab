@@ -7,7 +7,7 @@ import { ChatGenerationChunk, type ChatResult } from "@langchain/core/outputs";
 import type {
   ContextUsageProvider,
   ModelContextUsage,
-} from "../../modelCapabilities";
+} from "../../model/capabilities";
 import type { ChromeLanguageModelSession, ChromePrompt } from "./types";
 
 export const SYSTEM_PROMPT =
