@@ -44,7 +44,14 @@ type HarnessModel = BaseChatModel<BaseChatModelCallOptions> &
   Partial<ContextUsageProvider>;
 
 export class ChatHarness {
+  /**
+   * The harness owns all the message history,
+   * even though Chrome API keeps its own state,
+   * we have more control in the side of harness for tools
+   * implementation for instance
+   */
   private messages: BaseMessage[] = [];
+
   private listeners = new Set<HarnessListener>();
   private nextCallId = 1;
   private latestContextUsage: ModelContextUsage | null = null;
@@ -71,6 +78,11 @@ export class ChatHarness {
     return () => this.listeners.delete(listener);
   }
 
+  /**
+   * Runs a single message. no stream
+   * @param input message to the LLM
+   * @returns
+   */
   async run(input: string) {
     const nextMessages = [...this.messages, new HumanMessage(input)];
     const callId = this.nextCallId++;
@@ -106,6 +118,13 @@ export class ChatHarness {
     }
   }
 
+  /**
+   * Uses the stream in the adapter side
+   *
+   * @param input message to the LLM
+   * @param onChunk fn to process every chunk
+   * @returns
+   */
   async stream(input: string, onChunk: (chunk: string) => void) {
     const nextMessages = [...this.messages, new HumanMessage(input)];
     const callId = this.nextCallId++;

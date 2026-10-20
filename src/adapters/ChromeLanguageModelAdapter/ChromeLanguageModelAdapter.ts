@@ -69,7 +69,7 @@ export class ChromeLanguageModelAdapter
 
   private toChromeMessages(messages: BaseMessage[]) {
     return messages
-      .filter((message) => message.getType() !== "system")
+      .filter((message) => message.getType() !== "system") // filter the systme messages because we always send it
       .map((message): ChromePrompt => {
         const type = message.getType();
         const content = message.content.toString();
@@ -87,6 +87,8 @@ export class ChromeLanguageModelAdapter
     const session = await this.createSession();
 
     try {
+      // messages array comes as LangChain messages,
+      // we then transform them to what chrome expects
       const stream = session.promptStreaming(this.toChromeMessages(messages));
 
       for await (const chunk of stream) {
