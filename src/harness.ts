@@ -49,6 +49,22 @@ export type HarnessEvent =
       callId: number;
       error: string;
       timestamp: number;
+    }
+  | {
+      type: "tool_start";
+      callId: number;
+      toolCallId: string;
+      tool: string;
+      args: Record<string, unknown>;
+      timestamp: number;
+    }
+  | {
+      type: "tool_end";
+      callId: number;
+      toolCallId: string;
+      tool: string;
+      result: string;
+      timestamp: number;
     };
 
 type HarnessListener = (event: HarnessEvent) => void;
@@ -126,10 +142,23 @@ export class ChatHarness {
     }
   }
 
-  private async executeTool(toolCall: ToolCallRequest, toolCallId: string) {
+  private async executeTool(
+    toolCall: ToolCallRequest,
+    toolCallId: string,
+    callId: number,
+  ) {
     if (!this.tool || toolCall.tool !== this.tool.name) {
       throw new Error(`Unknown tool requested: ${toolCall.tool}`);
     }
+
+    this.emit({
+      type: "tool_start",
+      callId,
+      toolCallId,
+      tool: this.tool.name,
+      args: toolCall.args,
+      timestamp: Date.now(),
+    });
 
     const result = await this.tool.invoke(toolCall.args);
     const content =
@@ -138,6 +167,15 @@ export class ChatHarness {
         : result && typeof result === "object" && "content" in result
           ? String(result.content)
           : String(result);
+
+    this.emit({
+      type: "tool_end",
+      callId,
+      toolCallId,
+      tool: this.tool.name,
+      result: content,
+      timestamp: Date.now(),
+    });
 
     return new ToolMessage({
       content,
@@ -166,7 +204,11 @@ export class ChatHarness {
       return first.response;
     }
 
-    const toolMessage = await this.executeTool(toolCall, `tool-${first.callId}`);
+    const toolMessage = await this.executeTool(
+      toolCall,
+      `tool-${first.callId}`,
+      first.callId,
+    );
     const workingMessages = [...nextMessages, first.response, toolMessage];
     const final = await this.invokeModel(this.messagesForModel(workingMessages));
 
@@ -232,7 +274,11 @@ export class ChatHarness {
         return firstResponse;
       }
 
-      const toolMessage = await this.executeTool(toolCall, `tool-${firstCallId}`);
+      const toolMessage = await this.executeTool(
+        toolCall,
+        `tool-${firstCallId}`,
+        firstCallId,
+      );
       const workingMessages = [...nextMessages, firstResponse, toolMessage];
       const finalMessages = this.messagesForModel(workingMessages);
       const finalCallId = this.nextCallId++;
