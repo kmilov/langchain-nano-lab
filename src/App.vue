@@ -6,7 +6,7 @@ import {
   type ChromeAvailability,
 } from "./adapters/ChromeLanguageModelAdapter";
 import { ChatHarness, type HarnessEvent } from "./harness";
-import type { ModelContextUsage } from "./modelCapabilities";
+import type { ModelContextUsage } from "./model/capabilities";
 
 type Availability = "checking" | "unsupported" | ChromeAvailability;
 type ChatMessage = {
@@ -30,7 +30,7 @@ const input = ref("");
 const busy = ref(false);
 const messages = ref<ChatMessage[]>([]);
 const historySize = ref(0);
-const contextUsage = ref<ModelContextUsage | null>(null);
+const contextUsage = ref<ModelContextUsage>({ usedTokens: 0, maxTokens: 0 });
 const messagesEl = ref<HTMLElement | null>(null);
 const activeTab = ref<SideTab>("code");
 const debugEvents = ref<HarnessEvent[]>([]);
@@ -50,7 +50,7 @@ const ready = computed(() =>
 
 const contextUsageLabel = computed(() => {
   const usage = contextUsage.value;
-  if (!usage || usage.maxTokens <= 0) return "Context —";
+  if (usage.maxTokens <= 0) return "0% context";
 
   const percentage = Math.max(
     0,
@@ -177,7 +177,7 @@ async function sendMessage() {
     });
 
     historySize.value = harness.history().length;
-    contextUsage.value = harness.contextUsage();
+    contextUsage.value = harness.contextUsage() ?? { usedTokens: 0, maxTokens: 0 };
   } catch (error) {
     messages.value[assistantIndex] = {
       role: "error",
