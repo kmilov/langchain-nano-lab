@@ -86,6 +86,23 @@ button { cursor: pointer; }
 }
 .sectionHeader h1, .sectionHeader h2 { margin: 0; font-size: 20px; letter-spacing: -0.025em; }
 .sectionHeader p { margin: 5px 0 0; color: #737b89; font-size: 13px; line-height: 1.45; }
+.headerBadges {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.contextUsageLabel {
+  border: 1px solid #dfe4ec;
+  background: #f8fafc;
+  color: #5f6875;
+  padding: 6px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
 .step {
   background: #eef4ff;
   color: #2164da;
@@ -348,6 +365,7 @@ pre {
 @media (max-width: 620px) {
   .topbar { align-items: flex-start; }
   .sectionHeader { padding: 18px; }
+  .headerBadges { justify-content: flex-start; }
   .messages { padding: 18px; }
   .message { max-width: 92%; }
   .composer { grid-template-columns: 1fr; }

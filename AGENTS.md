@@ -59,11 +59,12 @@ Responsible for presentation only:
 - chat UI
 - streaming text rendering
 - model availability status
+- context-window usage label surfaced by the harness
 - Code / Debug tabs
 - debug timeline display
 - runtime inspection of `LanguageModel.params()`
 
-The UI should not talk directly to Chrome model sessions for normal chat execution.
+The UI should not talk directly to Chrome model sessions for normal chat execution or context usage. `LanguageModel.params()` remains a small explicit runtime-inspection exception in the Debug UI.
 
 ### `src/harness.ts`
 
@@ -76,12 +77,15 @@ It currently:
 - supports `stream()` for streaming execution
 - creates `HumanMessage` / final `AIMessage`
 - commits only completed responses to durable history
+- surfaces the latest provider-reported context usage through `contextUsage()`
 - emits debug events such as:
   - `llm_start`
   - `llm_end`
   - `llm_error`
 
 Streaming chunks are rendered by the UI callback but are intentionally **not logged individually** in the Debug timeline.
+
+The harness accepts a LangChain `BaseChatModel` plus optional provider-neutral capabilities rather than depending directly on the Chrome adapter type. Provider-specific information should cross this boundary through small capabilities such as `ContextUsageProvider`.
 
 This class is expected to become the tiny agent runtime later, so future responsibilities may include:
 
@@ -92,6 +96,19 @@ This class is expected to become the tiny agent runtime later, so future respons
 - context trimming/summarization
 - persistence
 - richer execution events
+
+### `src/modelCapabilities.ts`
+
+Contains small provider-neutral optional capabilities that are not part of LangChain's generic chat-model contract.
+
+Current capability:
+
+```text
+ContextUsageProvider.getContextUsage()
+→ { usedTokens, maxTokens } | null
+```
+
+Keep capability types provider-neutral. Chrome-specific field names and session details belong in the adapter.
 
 ### `src/adapters/ChromeLanguageModelAdapter/`
 
@@ -104,6 +121,8 @@ Responsibilities:
 - expose availability
 - implement non-streaming LangChain generation via `_generate()`
 - implement LangChain-native streaming via `_streamResponseChunks()`
+- read Chrome session `contextUsage` / `contextWindow` after completed calls
+- translate that provider-specific data into the provider-neutral context-usage capability
 
 Important: the harness should depend on LangChain's public model API (`invoke()`, `stream()`), not Chrome-specific helper methods.
 
@@ -129,13 +148,42 @@ Do not reintroduce a custom `adapter.streamResponse()` path unless there is a ve
 
 ---
 
+## Context usage
+
+Chrome's current Prompt API exposes context fill on a `LanguageModel` session through:
+
+```text
+session.contextUsage
+session.contextWindow
+```
+
+Read these after a completed prompt/stream and before destroying the ephemeral session.
+
+Because this project deliberately creates a fresh Chrome session for every model call and sends the complete explicit conversation history, the captured usage represents the context for that invocation, including the provider session's system prompt and conversation input/output as counted by Chrome.
+
+Do **not** have Vue reach into `LanguageModel` sessions to read these values. The flow is:
+
+```text
+Chrome session contextUsage/contextWindow
+→ ChromeLanguageModelAdapter
+→ ContextUsageProvider
+→ ChatHarness.contextUsage()
+→ Vue label
+```
+
+The label updates after the model response completes. If the browser build does not expose the fields, the capability returns `null` and the UI shows an unknown context state.
+
+`@langchain/core` 1.2.13 has generic token-usage metadata (`usage_metadata` / token usage) and model-context-size helpers for known hosted models, but it does not provide a generic live-session "used X of Y context window" contract. Do not conflate per-call token accounting with current context-window occupancy.
+
+---
+
 ## Conversation state decision
 
 A deliberate architectural decision was made in v1:
 
 **The harness owns conversation history. The Chrome model session does not.**
 
-Every invocation creates a fresh Chrome `LanguageModel` session, sends the complete explicit conversation history, receives a result, and destroys the session.
+Every invocation creates a fresh Chrome `LanguageModel` session, sends the complete explicit conversation history, receives a result, captures any provider usage metadata needed by capabilities, and destroys the session.
 
 Why:
 
@@ -245,6 +293,8 @@ available
 Inference is intended to run through Chrome's local built-in model path rather than a Gemini cloud API. There is no API key or hosted Gemini SDK in this project.
 
 `LanguageModel.params()` is treated as optional because support varies by Chrome build / exposure mode. The UI prints the actual runtime object instead of assuming a fixed schema.
+
+`contextUsage` and `contextWindow` are also typed defensively because Chrome's built-in AI API is evolving. The adapter validates both values before exposing them to the rest of the app.
 
 When working on Chrome Prompt API details, check current official Chrome documentation before making assumptions because this API is evolving.
 
@@ -385,11 +435,12 @@ src/
       index.ts
   App.vue
   harness.ts
+  modelCapabilities.ts
   main.ts
   styles.css
 ```
 
-Keep Chrome-specific types and logic inside the adapter folder where possible.
+Keep Chrome-specific types and logic inside the adapter folder where possible. Cross-provider optional model capabilities belong in `modelCapabilities.ts`, not in Vue.
 
 ---
 
@@ -464,7 +515,7 @@ Avoid:
 - prematurely introducing LangGraph or a full agent framework
 - hiding core agent mechanics behind utilities too early
 - mixing UI state with canonical model state
-- giving Chrome-specific APIs to the harness when LangChain already provides the abstraction
+- giving Chrome-specific APIs to the harness when LangChain or a tiny provider-neutral capability provides the boundary
 - giant refactors that make it hard to see what changed conceptually
 
 When adding a new feature, ask: **what new agent concept is this version teaching?**

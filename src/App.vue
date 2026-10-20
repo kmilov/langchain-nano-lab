@@ -6,6 +6,7 @@ import {
   type ChromeAvailability,
 } from "./adapters/ChromeLanguageModelAdapter";
 import { ChatHarness, type HarnessEvent } from "./harness";
+import type { ModelContextUsage } from "./modelCapabilities";
 
 type Availability = "checking" | "unsupported" | ChromeAvailability;
 type ChatMessage = {
@@ -29,6 +30,7 @@ const input = ref("");
 const busy = ref(false);
 const messages = ref<ChatMessage[]>([]);
 const historySize = ref(0);
+const contextUsage = ref<ModelContextUsage | null>(null);
 const messagesEl = ref<HTMLElement | null>(null);
 const activeTab = ref<SideTab>("code");
 const debugEvents = ref<HarnessEvent[]>([]);
@@ -45,6 +47,18 @@ harness.subscribe((event) => {
 const ready = computed(() =>
   ["available", "downloadable", "downloading"].includes(availability.value),
 );
+
+const contextUsageLabel = computed(() => {
+  const usage = contextUsage.value;
+  if (!usage || usage.maxTokens <= 0) return "Context —";
+
+  const percentage = Math.max(
+    0,
+    Math.min(100, Math.round((usage.usedTokens / usage.maxTokens) * 100)),
+  );
+
+  return `${percentage}% of ${formatTokenCount(usage.maxTokens)} context`;
+});
 
 const modelParamsText = computed(() => {
   if (modelParamsStatus.value === "loading") return "Loading LanguageModel.params()…";
@@ -113,6 +127,13 @@ function eventTime(event: HarnessEvent) {
   return new Date(event.timestamp).toLocaleTimeString();
 }
 
+function formatTokenCount(tokens: number) {
+  if (tokens < 1000) return `${Math.round(tokens)}`;
+
+  const thousands = Math.round((tokens / 1000) * 10) / 10;
+  return `${thousands.toString()}k`;
+}
+
 async function loadModelParams() {
   if (!("LanguageModel" in globalThis) || typeof LanguageModel.params !== "function") {
     modelParamsStatus.value = "unsupported";
@@ -156,6 +177,7 @@ async function sendMessage() {
     });
 
     historySize.value = harness.history().length;
+    contextUsage.value = harness.contextUsage();
   } catch (error) {
     messages.value[assistantIndex] = {
       role: "error",
@@ -209,7 +231,10 @@ onMounted(async () => {
             <h1>Chat</h1>
             <p>Streaming through LangChain, with model calls and final responses mirrored into Debug.</p>
           </div>
-          <span class="step">v2.5 · debug · {{ historySize }} msgs</span>
+          <div class="headerBadges">
+            <span class="contextUsageLabel">{{ contextUsageLabel }}</span>
+            <span class="step">v2.5 · debug · {{ historySize }} msgs</span>
+          </div>
         </div>
 
         <div ref="messagesEl" class="messages">

@@ -12,6 +12,8 @@ export type ChromeAvailability =
   | "available";
 
 export interface ChromeLanguageModelSession {
+  contextUsage?: number;
+  contextWindow?: number;
   prompt(input: string | ChromePrompt[]): Promise<string>;
   promptStreaming(input: string | ChromePrompt[]): ReadableStream<string>;
   destroy(): void;

@@ -4,12 +4,21 @@ import {
 } from "@langchain/core/language_models/chat_models";
 import { AIMessage, AIMessageChunk, type BaseMessage } from "@langchain/core/messages";
 import { ChatGenerationChunk, type ChatResult } from "@langchain/core/outputs";
-import type { ChromePrompt } from "./types";
+import type {
+  ContextUsageProvider,
+  ModelContextUsage,
+} from "../../modelCapabilities";
+import type { ChromeLanguageModelSession, ChromePrompt } from "./types";
 
 export const SYSTEM_PROMPT =
   "You are a concise programming assistant. Prefer short, precise explanations.";
 
-export class ChromeLanguageModelAdapter extends BaseChatModel<BaseChatModelCallOptions> {
+export class ChromeLanguageModelAdapter
+  extends BaseChatModel<BaseChatModelCallOptions>
+  implements ContextUsageProvider
+{
+  private lastContextUsage: ModelContextUsage | null = null;
+
   _llmType() {
     return "chrome-gemini-nano";
   }
@@ -21,6 +30,28 @@ export class ChromeLanguageModelAdapter extends BaseChatModel<BaseChatModelCallO
       expectedInputs: [{ type: "text", languages: ["en"] }],
       expectedOutputs: [{ type: "text", languages: ["en"] }],
     });
+  }
+
+  getContextUsage(): ModelContextUsage | null {
+    return this.lastContextUsage ? { ...this.lastContextUsage } : null;
+  }
+
+  private captureContextUsage(session: ChromeLanguageModelSession) {
+    const usedTokens = session.contextUsage;
+    const maxTokens = session.contextWindow;
+
+    if (
+      typeof usedTokens !== "number" ||
+      !Number.isFinite(usedTokens) ||
+      typeof maxTokens !== "number" ||
+      !Number.isFinite(maxTokens) ||
+      maxTokens <= 0
+    ) {
+      this.lastContextUsage = null;
+      return;
+    }
+
+    this.lastContextUsage = { usedTokens, maxTokens };
   }
 
   private async createSession() {
@@ -64,6 +95,8 @@ export class ChromeLanguageModelAdapter extends BaseChatModel<BaseChatModelCallO
           message: new AIMessageChunk({ content: chunk }),
         });
       }
+
+      this.captureContextUsage(session);
     } finally {
       session.destroy();
     }
@@ -77,6 +110,7 @@ export class ChromeLanguageModelAdapter extends BaseChatModel<BaseChatModelCallO
 
     try {
       const output = await session.prompt(this.toChromeMessages(messages));
+      this.captureContextUsage(session);
 
       return {
         generations: [

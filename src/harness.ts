@@ -1,5 +1,12 @@
+import {
+  BaseChatModel,
+  type BaseChatModelCallOptions,
+} from "@langchain/core/language_models/chat_models";
 import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messages";
-import { ChromeLanguageModelAdapter } from "./adapters/ChromeLanguageModelAdapter";
+import type {
+  ContextUsageProvider,
+  ModelContextUsage,
+} from "./modelCapabilities";
 
 export type MessageSnapshot = {
   role: string;
@@ -33,13 +40,16 @@ export type HarnessEvent =
     };
 
 type HarnessListener = (event: HarnessEvent) => void;
+type HarnessModel = BaseChatModel<BaseChatModelCallOptions> &
+  Partial<ContextUsageProvider>;
 
 export class ChatHarness {
   private messages: BaseMessage[] = [];
   private listeners = new Set<HarnessListener>();
   private nextCallId = 1;
+  private latestContextUsage: ModelContextUsage | null = null;
 
-  constructor(private readonly model: ChromeLanguageModelAdapter) {}
+  constructor(private readonly model: HarnessModel) {}
 
   private snapshot(message: BaseMessage): MessageSnapshot {
     return {
@@ -50,6 +60,10 @@ export class ChatHarness {
 
   private emit(event: HarnessEvent) {
     for (const listener of this.listeners) listener(event);
+  }
+
+  private refreshContextUsage() {
+    this.latestContextUsage = this.model.getContextUsage?.() ?? null;
   }
 
   subscribe(listener: HarnessListener) {
@@ -71,6 +85,7 @@ export class ChatHarness {
     try {
       const response = await this.model.invoke(nextMessages);
       this.messages = [...nextMessages, response];
+      this.refreshContextUsage();
 
       this.emit({
         type: "llm_end",
@@ -114,6 +129,7 @@ export class ChatHarness {
 
       const response = new AIMessage(output);
       this.messages = [...nextMessages, response];
+      this.refreshContextUsage();
 
       this.emit({
         type: "llm_end",
@@ -138,7 +154,12 @@ export class ChatHarness {
     return [...this.messages];
   }
 
+  contextUsage(): ModelContextUsage | null {
+    return this.latestContextUsage ? { ...this.latestContextUsage } : null;
+  }
+
   clear() {
     this.messages = [];
+    this.latestContextUsage = null;
   }
 }
