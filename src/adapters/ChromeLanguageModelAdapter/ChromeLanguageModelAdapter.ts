@@ -90,6 +90,10 @@ export class ChromeLanguageModelAdapter
 
         if (type === "human") return { role: "user", content };
         if (type === "ai") return { role: "assistant", content };
+        if (type === "tool") {
+          return { role: "user", content: `Tool result: ${content}` };
+        }
+
         throw new Error(`Unsupported LangChain message type: ${type}`);
       });
   }

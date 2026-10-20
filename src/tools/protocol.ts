@@ -10,9 +10,11 @@ export function toolInstructions(tool: StructuredToolInterface): string {
   return [
     "You have access to one tool.",
     "Use it when it is needed to answer the user's request accurately.",
+    "You may request the tool at most once per user message.",
     "If you need the tool, reply with ONLY a JSON object in this exact shape:",
     '{"type":"tool_call","tool":"<tool name>","args":{...}}',
     "Do not wrap the JSON in Markdown or add any other text.",
+    "After a tool result is provided, answer the user normally and do not request another tool.",
     "If no tool is needed, answer the user normally.",
     "",
     `Tool name: ${tool.name}`,
