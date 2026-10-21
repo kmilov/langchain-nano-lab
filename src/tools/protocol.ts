@@ -23,6 +23,7 @@ export function toolInstructions(tools: StructuredToolInterface[]): string {
     "Do not wrap the JSON in Markdown or add any other text.",
     "Choose the tool whose name and description best match the request.",
     "After a tool result is provided, either request another tool if needed or answer the user normally.",
+    "When you give the final answer, answer the user's original request completely and include all relevant results from every tool call in this turn.",
     "If no tool is needed, answer the user normally.",
     "",
     ...toolDescriptions,
