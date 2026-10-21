@@ -52,6 +52,15 @@ export type HarnessEvent =
 type HarnessListener = (event: HarnessEvent) => void;
 type HarnessModel = BaseChatModel<BaseChatModelCallOptions> & Partial<ContextUsageProvider>;
 
+function detectToolCallCandidate(output: string): boolean | null {
+  const trimmed = output.trimStart();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("{")) return true;
+  if (trimmed.startsWith("```")) return true;
+  if ("```".startsWith(trimmed)) return null;
+  return false;
+}
+
 export class ChatHarness {
   private messages: BaseMessage[] = [];
   private listeners = new Set<HarnessListener>();
@@ -132,11 +141,8 @@ export class ChatHarness {
         output += text;
 
         if (toolCallCandidate === null) {
-          const trimmed = output.trimStart();
-          if (trimmed.length > 0) {
-            toolCallCandidate = trimmed.startsWith("{") || trimmed.startsWith("```");
-            if (!toolCallCandidate) onChunk(output);
-          }
+          toolCallCandidate = detectToolCallCandidate(output);
+          if (toolCallCandidate === false) onChunk(output);
         } else if (!toolCallCandidate) {
           onChunk(text);
         }
