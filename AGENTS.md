@@ -9,9 +9,7 @@
 - Chrome's browser-native `LanguageModel` API for on-device inference
 - Gemini Nano / Chrome built-in AI as the local model runtime
 
-The long-term learning goal is to build a tiny agent runtime conceptually similar to the minimum building blocks behind tools such as Pi / Codex / Claude Code. We are intentionally building this incrementally instead of jumping directly to a full agent framework.
-
-The conceptual layers are:
+Conceptual layers:
 
 ```text
 UI / I/O
@@ -33,20 +31,18 @@ Keep these boundaries clear.
 
 ## Current milestone
 
-The project is currently at **v3: one tool**.
-
-Learning progression so far:
+The project is currently at **v4: tool loop**.
 
 ```text
-v0  basic invoke()
-v1  explicit conversation history
-v2  streaming
-v2.5 debug / observability UI
-v3  one tool       ← complete
-v4  tool loop      ← next major milestone
+v0    basic invoke()
+v1    explicit conversation history
+v2    streaming
+v2.5  debug / observability UI
+v3    one tool
+v4    multiple tools + bounded tool loop  ← complete
 ```
 
-Do not skip directly to a large agent abstraction. The value of this repo is that each stage exposes one new mechanism clearly.
+Do not jump directly to LangGraph or another full agent abstraction. The purpose of this repository is to keep the mechanics visible.
 
 ---
 
@@ -54,147 +50,106 @@ Do not skip directly to a large agent abstraction. The value of this repo is tha
 
 ### `src/App.vue`
 
-Responsible for presentation only:
+Presentation responsibilities:
 
 - chat UI
 - streaming text rendering
 - model availability status
-- context-window usage label surfaced by the harness
+- context-window usage label
 - Code / Debug tabs
-- debug timeline display, including tool execution events
+- debug timeline
 - runtime inspection of `LanguageModel.params()`
 
-The UI should not talk directly to Chrome model sessions for normal chat execution or context usage. `LanguageModel.params()` remains a small explicit runtime-inspection exception in the Debug UI.
-
-The app wires the current v3 calculator tool into the harness:
+The app currently configures two LangChain tools:
 
 ```ts
-const harness = new ChatHarness(model, calculatorTool);
+const harness = new ChatHarness(model, [
+  calculatorTool,
+  wordCountTool,
+]);
 ```
+
+The UI should not own canonical model history or tool orchestration.
 
 ### `src/harness.ts`
 
-`ChatHarness` is the orchestration layer and owns canonical conversation state.
-
-It currently:
-
-- stores `BaseMessage[]` history
-- supports `run()` for non-streaming execution
-- supports `stream()` for streaming execution
-- creates `HumanMessage`, intermediate `AIMessage`, `ToolMessage`, and final `AIMessage`
-- commits completed execution state to explicit history
-- surfaces the latest provider-reported context usage through `contextUsage()`
-- accepts one optional LangChain tool
-- detects the tiny v3 structured tool-call protocol
-- executes that tool
-- performs one follow-up model call with the tool result
-- emits debug events such as:
-  - `llm_start`
-  - `llm_end`
-  - `llm_error`
-  - `tool_start`
-  - `tool_end`
-
-Streaming chunks are rendered by the UI callback but are intentionally **not logged individually** in the Debug timeline.
-
-The harness accepts a LangChain `BaseChatModel` plus optional provider-neutral capabilities rather than depending directly on the Chrome adapter type. Provider-specific information should cross this boundary through small capabilities such as `ContextUsageProvider`.
-
-The harness is now visibly becoming the tiny agent engine:
-
-```text
-LLM = decides
-Harness = orchestrates / acts
-Tool = performs deterministic work
-```
-
-Future responsibilities may include:
-
-- multiple tools
-- repeated model/tool loops
-- retries
-- context trimming/summarization
-- persistence
-- richer execution events
-
-### `src/model/capabilities.ts`
-
-Contains small provider-neutral optional capabilities that are not part of LangChain's generic chat-model contract.
-
-Current capability:
-
-```text
-ContextUsageProvider.getContextUsage()
-→ { usedTokens, maxTokens } | null
-```
-
-Keep capability types provider-neutral. Chrome-specific field names and session details belong in the adapter.
-
-### `src/adapters/ChromeLanguageModelAdapter/`
-
-The Chrome adapter extends LangChain's `BaseChatModel`.
+`ChatHarness` is the tiny agent engine and owns canonical conversation state.
 
 Responsibilities:
 
-- translate LangChain messages into Chrome Prompt API messages
-- create/destroy browser `LanguageModel` sessions
-- expose availability
-- implement non-streaming LangChain generation via `_generate()`
-- implement LangChain-native streaming via `_streamResponseChunks()`
-- translate LangChain `SystemMessage`s into Chrome `initialPrompts`
-- translate `ToolMessage` into a normal Chrome user message because Chrome has no native tool role
-- read Chrome session `contextUsage` / `contextWindow` after completed calls
-- translate that provider-specific data into the provider-neutral context-usage capability
+- store explicit `BaseMessage[]` history
+- expose `run()` and `stream()`
+- add dynamic tool instructions through `SystemMessage`
+- inspect model output for tool requests
+- route requests to a configured tool by name
+- execute tools
+- append intermediate `AIMessage` + `ToolMessage` state
+- call the model again
+- repeat until the model returns a normal answer
+- stop after `MAX_TOOL_STEPS = 5`
+- expose provider-neutral context usage
+- emit debug events (`llm_start`, `llm_end`, `llm_error`, `tool_start`, `tool_end`)
 
-Important: the harness should depend on LangChain's public model API (`invoke()`, `stream()`), not Chrome-specific helper methods.
-
-Expected execution paths:
-
-```text
-harness.run()
-→ model.invoke()
-→ adapter._generate()
-→ session.prompt(...)
-```
-
-and:
+Ownership model:
 
 ```text
-harness.stream()
-→ model.stream()
-→ adapter._streamResponseChunks()
-→ session.promptStreaming(...)
+LLM     = decides what should happen next
+Harness = validates, orchestrates, and acts
+Tool    = performs deterministic work
 ```
 
-Do not reintroduce a custom `adapter.streamResponse()` path unless there is a very strong reason.
+The current loop is intentionally explicit:
 
----
+```text
+workingMessages = history + user
 
-## v3 one-tool architecture
+while true:
+  model response
+    ↓
+  tool request?
+    ├─ no  → persist final response and return
+    └─ yes → route tool by name
+              ↓
+            execute tool
+              ↓
+            append AI tool request + ToolMessage
+              ↓
+            repeat
+```
 
-Chrome's current public Prompt API does not provide a native tool/function-calling parameter in the path used by this project, so v3 uses a deliberately tiny explicit protocol.
+`streamModel()` contains the repeated streaming/event/context plumbing so `stream()` can remain focused on the agent loop.
 
-Current tool:
+### `src/tools/`
+
+Current deterministic tools:
 
 ```text
 calculator
   a: number
   b: number
   operation: add | subtract | multiply | divide
+
+word_count
+  text: string
 ```
 
-The calculator is a LangChain tool defined in:
+Files:
 
 ```text
 src/tools/calculator.ts
-```
-
-The model/tool protocol lives separately in:
-
-```text
+src/tools/wordCount.ts
 src/tools/protocol.ts
 ```
 
-The model is instructed to emit a tool request like:
+Tools are defined with LangChain's `tool()` helper and satisfy `StructuredToolInterface`.
+
+Tool implementations know nothing about Chrome, the UI, conversation history, or agent orchestration.
+
+### `src/tools/protocol.ts`
+
+Chrome's Prompt API path used by this project does not provide native function calling, so the project uses a small explicit JSON protocol.
+
+Nano is instructed to request one tool at a time:
 
 ```json
 {
@@ -208,290 +163,177 @@ The model is instructed to emit a tool request like:
 }
 ```
 
-The harness owns interpretation and execution. The calculator knows nothing about LLM prompting, and the Chrome adapter knows nothing about calculator semantics.
+After receiving a tool result, Nano may either request another tool or return the final answer.
 
-Current v3 flow:
+`parseToolCall()` accepts raw JSON and an optional Markdown JSON fence because Nano may ignore the no-Markdown instruction.
+
+This protocol is a learning-oriented bridge, not a general-purpose tool-calling standard.
+
+### `src/adapters/ChromeLanguageModelAdapter/`
+
+The adapter extends LangChain's `BaseChatModel`.
+
+Responsibilities:
+
+- translate LangChain messages into Chrome Prompt API messages
+- create/destroy a fresh Chrome `LanguageModel` session per invocation
+- expose availability
+- implement `_generate()`
+- implement `_streamResponseChunks()`
+- merge the base prompt and dynamic LangChain system instructions into one first Chrome `system` prompt
+- translate `ToolMessage` into a Chrome user message (`Tool result: ...`) because Chrome has no native tool role
+- capture `contextUsage` / `contextWindow`
+- expose that information through `ContextUsageProvider`
+
+The adapter does **not** decide which tool to use or execute tools.
+
+---
+
+## Tool-loop streaming behavior
+
+Every model stage may be either a hidden tool request or a user-visible answer.
+
+The harness uses a two-stage decision:
 
 ```text
-user
-  ↓
-model call #1
-  ↓
-structured tool request
-  ↓
-harness executes calculator
-  ↓
-ToolMessage(result)
-  ↓
-model call #2
-  ↓
-final answer
+stream-time heuristic
+→ does the beginning look like raw/fenced JSON?
+→ if yes, buffer temporarily
+
+parseToolCall()
+→ after the model stage finishes, confirm whether it is a valid tool request
 ```
 
-Intermediate tool-call and tool-result messages are model-visible execution state but are hidden from the normal chat UI. Debug exposes them.
+Normal prose streams to Vue immediately.
 
-Streaming behavior in v3:
+Possible tool JSON stays hidden from the normal chat UI. If parsing fails, the buffered response is released to the UI. If parsing succeeds, the tool runs and the loop continues.
 
-- normal prose responses stream immediately
-- responses that begin with `{` are buffered temporarily so the harness can decide whether they are hidden tool requests
-- final post-tool responses stream normally
+The stream heuristic deliberately handles split Markdown fence chunks such as:
 
-This JSON buffering is a learning-oriented bridge, not a final general-purpose agent protocol.
+```text
+chunk 1: `
+chunk 2: ``json
+```
+
+so hidden tool requests are not leaked into the chat UI.
+
+Important conceptual split:
+
+```text
+stream chunks = transient execution
+AIMessage / ToolMessage = durable execution state
+```
+
+---
+
+## Conversation state decision
+
+The harness owns conversation history. Chrome sessions are stateless transports for one invocation.
+
+```text
+ChatHarness history = source of truth
+Chrome session       = one-call transport
+```
+
+Every invocation creates a new Chrome session, sends explicit history, captures provider metadata, then destroys the session.
+
+Do not casually switch to persistent Chrome sessions; doing so risks duplicating context because both the harness and provider session would remember prior turns.
+
+---
+
+## System prompt flow
+
+The model receives one Chrome system message containing the conceptual combination of:
+
+```text
+Adapter base SYSTEM_PROMPT
++
+Harness dynamic tool instructions
+```
+
+Chrome requires the `system` role message to be first, so multiple LangChain system messages must be merged before creating the session.
+
+The normal conversation and intermediate execution state then follow as user/assistant messages translated by the adapter.
 
 ---
 
 ## Context usage
 
-Chrome's current Prompt API exposes context fill on a `LanguageModel` session through:
+Provider-specific source:
 
 ```text
 session.contextUsage
 session.contextWindow
 ```
 
-Read these after a completed prompt/stream and before destroying the ephemeral session.
-
-Because this project deliberately creates a fresh Chrome session for every model call and sends the complete explicit conversation history, the captured usage represents the context for that invocation, including the provider session's system prompt and conversation input/output as counted by Chrome.
-
-Do **not** have Vue reach into `LanguageModel` sessions to read these values. The flow is:
+Flow:
 
 ```text
-Chrome session contextUsage/contextWindow
+Chrome session
 → ChromeLanguageModelAdapter
 → ContextUsageProvider
 → ChatHarness.contextUsage()
 → Vue label
 ```
 
-The label updates after the model response completes. If the browser build does not expose the fields, the capability returns `null`; the UI currently displays a `0% context` fallback.
+If unsupported, the capability returns `null`; the UI currently maps that to a `0% context` display fallback.
 
-`@langchain/core` 1.2.13 has generic token-usage metadata (`usage_metadata` / token usage) and model-context-size helpers for known hosted models, but it does not provide a generic live-session "used X of Y context window" contract. Do not conflate per-call token accounting with current context-window occupancy.
-
----
-
-## Conversation state decision
-
-A deliberate architectural decision was made in v1:
-
-**The harness owns conversation history. The Chrome model session does not.**
-
-Every invocation creates a fresh Chrome `LanguageModel` session, sends the complete explicit conversation history, receives a result, captures any provider usage metadata needed by capabilities, and destroys the session.
-
-Why:
-
-If both the harness and a persistent Chrome session remember previous turns, the effective context can be duplicated.
-
-Chosen model:
-
-```text
-ChatHarness history = source of truth
-Chrome session       = stateless transport for one invocation
-```
-
-This also makes agent features easier because tool calls, tool results, summaries, retries, branches, and persistence need explicit state outside the model provider.
-
-Do not casually change this to a persistent Chrome session without reconsidering that tradeoff.
-
----
-
-## Streaming model
-
-LangChain streaming uses `ChatGenerationChunk` / `AIMessageChunk` internally.
-
-Important conceptual split:
-
-```text
-stream chunks = transient execution
-final AIMessage = durable conversation state
-```
-
-The UI may receive many chunks during generation, but the harness stores one final assistant message for each completed model stage. Tool-call and tool-result records are explicit intermediate execution state.
+Do not confuse context-window occupancy with LangChain per-call token accounting.
 
 ---
 
 ## Debug UI
 
-The right-side panel has two tabs:
+The Debug tab shows:
+
+1. adapter system prompt
+2. `LanguageModel.params()` when exposed
+3. one fold per LLM call
+4. input messages
+5. final model output or error
+6. tool args/result associated with the model call that requested the tool
+
+With v4, a request may produce several folds:
 
 ```text
-Code | Debug
+LLM Call #1
+  tool: calculator
+
+LLM Call #2
+  tool: word_count
+
+LLM Call #3
+  final answer
 ```
 
-The Debug tab currently shows:
-
-1. Adapter system prompt
-2. `LanguageModel.params()` runtime output when exposed by the current Chrome build
-3. One foldable section per LLM call
-4. Tool arguments/results associated with the originating model call
-
-Each call fold may group:
-
-- input messages sent through LangChain
-- final assistant response, or error
-- tool request arguments
-- tool execution result
-- status / timestamp
-
-Do not log every streaming chunk in Debug; that was intentionally removed because it made the trace noisy.
-
-The debug folds use native `<details>/<summary>`.
-
-The Debug feed CSS must keep rows content-sized. In particular:
-
-```css
-.debugFeed {
-  align-content: start;
-  grid-auto-rows: max-content;
-}
-```
-
-Without that, collapsed grid rows stretch vertically and appear broken.
+Streaming chunks are intentionally not logged individually.
 
 ---
 
-## System prompts
-
-The adapter injects the base system prompt when it creates the Chrome session using `initialPrompts`.
-
-The adapter also forwards dynamic LangChain `SystemMessage`s into `initialPrompts`. v3 uses this to provide the tool description and structured response protocol.
-
-The current model input therefore has multiple conceptual sources:
+## Repository structure
 
 ```text
-Chrome adapter base system prompt
-  → general assistant behavior
-
-Harness dynamic SystemMessage
-  → tool description + tool-call protocol
-
-ChatHarness history
-  → human + assistant + tool execution messages
+src/
+  adapters/
+    ChromeLanguageModelAdapter/
+      ChromeLanguageModelAdapter.ts
+      types.ts
+      index.ts
+  model/
+    capabilities.ts
+  tools/
+    calculator.ts
+    wordCount.ts
+    protocol.ts
+  App.vue
+  harness.ts
+  main.ts
+  styles.css
 ```
-
-The Debug UI intentionally exposes these boundaries through model-call inputs and execution events.
-
----
-
-## Chrome `LanguageModel` API notes
-
-This project uses the browser-native `LanguageModel` global.
-
-The adapter guards for unsupported browsers.
-
-Relevant states include:
-
-```text
-unsupported
-unavailable
-downloadable
-downloading
-available
-```
-
-Inference is intended to run through Chrome's local built-in model path rather than a Gemini cloud API. There is no API key or hosted Gemini SDK in this project.
-
-`LanguageModel.params()` is treated as optional because support varies by Chrome build / exposure mode. The UI prints the actual runtime object instead of assuming a fixed schema.
-
-`contextUsage` and `contextWindow` are also typed defensively because Chrome's built-in AI API is evolving. The adapter validates both values before exposing them to the rest of the app.
-
-When working on Chrome Prompt API details, check current official Chrome documentation before making assumptions because this API is evolving.
-
----
-
-## Tooling direction: next milestone
-
-The next major milestone is **v4: tool loop**.
-
-v3 is intentionally constrained to one tool and at most one tool execution before a final model response.
-
-v4 should generalize this:
-
-```text
-user
-  ↓
-model
-  ↓
-zero or more:
-  tool request
-    ↓
-  harness executes tool
-    ↓
-  tool result returns to model
-  ↓
-final answer
-```
-
-Keep the conceptual ownership:
-
-```text
-LLM     = decides
-Harness = orchestrates / acts
-Tool    = performs deterministic work
-```
-
-Likely v4 work:
-
-- accept multiple tools
-- serialize all tool descriptions
-- route by tool name
-- repeat until the model returns a normal answer
-- add a maximum iteration guard
-- keep tool execution visible in Debug
-
-Do not hide this behind LangGraph yet. The learning goal is to see the loop directly.
-
----
-
-## UI / layout conventions
-
-The desktop interface is full viewport height.
-
-Expected behavior:
-
-- top bar remains outside pane scrolling
-- chat pane fills available height
-- chat message area scrolls independently
-- composer stays visible
-- Code / Debug pane scrolls independently
-- mobile/tablet falls back to normal page scrolling
-
-Avoid reverting to a document-height layout unless intentionally redesigning the UI.
-
-The UI is intentionally minimal and educational rather than polished product chrome.
-
----
-
-## Code sidebar purpose
-
-The Code tab is not decoration. It is part of the learning experience.
-
-Its purpose is:
-
-```text
-left side  = observe behavior
-right side = see the minimal code responsible
-```
-
-As milestones evolve, update the snippets so they reflect the architectural concept currently being taught.
-
-Examples:
-
-```text
-v0 invoke
-v1 history
-v2 streaming
-v2.5 observability
-v3 one tool
-v4 tool loop
-```
-
-Prefer small representative snippets over dumping entire source files into the sidebar.
 
 ---
 
 ## Tech stack
-
-Current `package.json` essentials:
 
 ```text
 Vue                3.5.13
@@ -510,59 +352,17 @@ npm run build
 npm run preview
 ```
 
-`npm run build` currently runs `vite build`; there is no `vue-tsc` build step yet.
-
----
-
-## Repository structure
-
-Current important files:
-
-```text
-src/
-  adapters/
-    ChromeLanguageModelAdapter/
-      ChromeLanguageModelAdapter.ts
-      types.ts
-      index.ts
-  model/
-    capabilities.ts
-  tools/
-    calculator.ts
-    protocol.ts
-  App.vue
-  harness.ts
-  main.ts
-  styles.css
-```
-
-Keep Chrome-specific types and logic inside the adapter folder where possible. Cross-provider optional model capabilities belong in `src/model/`, not in Vue or a provider adapter folder. Tool implementations and the temporary v3 tool protocol belong in `src/tools/`.
+`npm run build` uses `vite build`; there is currently no `vue-tsc` build step.
 
 ---
 
 ## Git workflow
 
-Important project preference:
+Every logical change should be committed separately.
 
-**Every logical change should be committed separately.**
+If one logical change spans multiple files, commit those files atomically in one commit.
 
-Use short, descriptive commits such as:
-
-```text
-Add v2 streaming
-Use LangChain native streaming API
-Add v2.5 debug timeline
-Add calculator tool
-Add one-tool calling protocol
-Add one-tool execution flow
-Emit tool execution events
-```
-
-Do not bundle unrelated refactors/features into one commit.
-
-If a logical change touches multiple files, commit them together as one atomic commit.
-
-Default branch is `main`.
+Default branch: `main`
 
 Repository:
 
@@ -574,9 +374,9 @@ kmilov/langchain-nano-lab
 
 ## Deployment
 
-The repo is linked to Vercel and pushes to `main` automatically trigger production deployment.
+The repo is linked to Vercel. Pushes to `main` normally trigger production deployment.
 
-Primary production alias:
+Production alias:
 
 ```text
 https://langchain-nano-lab.vercel.app
@@ -587,32 +387,32 @@ Normal flow:
 ```text
 commit/push to main
 → GitHub
-→ Vercel detects commit
-→ production build/deploy
+→ Vercel build
+→ production
 ```
 
-Do not trigger an extra manual deployment unless needed.
+Do not create an extra manual deployment unless needed.
 
 ---
 
-## Development style for this repository
+## Development style
 
 This is a learning project. Prefer:
 
 - small changes
+- explicit state
 - visible causal relationships
 - first-principles explanations
-- explicit state
+- readable TypeScript
 - minimal abstractions until repetition justifies them
-- readable TypeScript over cleverness
-- provider boundaries that remain easy to inspect
+- provider-neutral boundaries
 
 Avoid:
 
-- prematurely introducing LangGraph or a full agent framework
-- hiding core agent mechanics behind utilities too early
-- mixing UI state with canonical model state
-- giving Chrome-specific APIs to the harness when LangChain or a tiny provider-neutral capability provides the boundary
-- giant refactors that make it hard to see what changed conceptually
+- premature LangGraph/full-agent-framework adoption
+- hiding the core model → tool → model loop
+- giant refactors
+- mixing UI state with canonical conversation state
+- leaking Chrome-specific APIs into the harness
 
-When adding a new feature, ask: **what new agent concept is this version teaching?**
+When adding a feature, ask: **what new agent concept is this version teaching?**
