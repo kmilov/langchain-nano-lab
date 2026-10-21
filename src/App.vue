@@ -110,15 +110,20 @@ const adapterCode = `async *_streamResponseChunks(messages) {
   }
 }`;
 
-const harnessCode = `const toolCall = parseToolCall(firstResponse);
+const harnessCode = `while (true) {
+  const modelCall = await streamModel(
+    messagesForModel(workingMessages),
+    onChunk,
+  );
 
-if (toolCall) {
+  const toolCall = parseToolCall(
+    modelCall.response.content.toString(),
+  );
+
+  if (!toolCall) return modelCall.response;
+
   const toolMessage = await executeTool(toolCall);
-  const finalResponse = await model.stream([
-    ...messages,
-    firstResponse,
-    toolMessage,
-  ]);
+  workingMessages.push(modelCall.response, toolMessage);
 }`;
 
 function eventTime(event: HarnessEvent) {
@@ -227,19 +232,19 @@ onMounted(async () => {
         <div class="sectionHeader">
           <div>
             <h1>Chat</h1>
-            <p>Streaming through LangChain, with one tool handled by the Harness.</p>
+            <p>Streaming through LangChain, with multiple tools orchestrated by the Harness.</p>
           </div>
           <div class="headerBadges">
             <span class="contextUsageLabel">{{ contextUsageLabel }}</span>
-            <span class="step">v3 · one tool · {{ historySize }} msgs</span>
+            <span class="step">v4 · tool loop · {{ historySize }} msgs</span>
           </div>
         </div>
 
         <div ref="messagesEl" class="messages">
           <div v-if="messages.length === 0" class="empty">
             <div class="emptyMark">⌁</div>
-            <strong>Try: “What is 37 × 19?”</strong>
-            <span>Open Debug to see the hidden tool request, execution, and second model call.</span>
+            <strong>Try: “Multiply 37 by 19, then count the words in ‘local agents are fun’.”</strong>
+            <span>Open Debug to see Nano choose tools, receive results, and continue the loop.</span>
           </div>
 
           <div
@@ -283,7 +288,7 @@ onMounted(async () => {
           <div class="sectionHeader codeHeading">
             <div>
               <h2>Code</h2>
-              <p>v3 adds one deterministic tool and one model → tool → model path.</p>
+              <p>v4 adds multiple tools, routing by name, and a bounded model → tool loop.</p>
             </div>
           </div>
 
@@ -293,13 +298,13 @@ onMounted(async () => {
           </section>
 
           <section class="codeBlock">
-            <div class="codeBar">2 · ChatHarness · one-tool execution</div>
+            <div class="codeBar">2 · ChatHarness · bounded tool loop</div>
             <pre><code>{{ harnessCode }}</code></pre>
           </section>
 
           <div class="nextSteps">
-            <span>Next</span>
-            <strong>v4 · generalize one tool into a tool loop</strong>
+            <span>Tools</span>
+            <strong>calculator · word_count · max 5 tool steps</strong>
           </div>
         </template>
 
@@ -307,7 +312,7 @@ onMounted(async () => {
           <div class="sectionHeader codeHeading debugHeader">
             <div>
               <h2>Debug</h2>
-              <p>Model calls and hidden tool execution are visible here.</p>
+              <p>Every model call and hidden tool execution in the loop is visible here.</p>
             </div>
             <button class="clearButton" :disabled="debugEvents.length === 0" @click="clearDebug">Clear</button>
           </div>
