@@ -217,8 +217,9 @@ export class ChatHarness {
   }
 
   /**
-   * Streams normal answers immediately. A response that begins with JSON is
-   * buffered until the harness can determine whether it is a tool request.
+   * Streams normal answers immediately. A response that begins with raw JSON
+   * or a fenced JSON block is buffered until the harness can determine whether
+   * it is a tool request.
    *
    * @param input message to the LLM
    * @param onChunk fn to process every user-visible chunk
@@ -239,19 +240,20 @@ export class ChatHarness {
     try {
       const stream = await this.model.stream(firstMessages);
       let output = "";
-      let jsonCandidate: boolean | null = null;
+      let toolCallCandidate: boolean | null = null;
 
       for await (const chunk of stream) {
         const text = chunk.content.toString();
         output += text;
 
-        if (jsonCandidate === null) {
+        if (toolCallCandidate === null) {
           const trimmed = output.trimStart();
           if (trimmed.length > 0) {
-            jsonCandidate = trimmed.startsWith("{");
-            if (!jsonCandidate) onChunk(output);
+            toolCallCandidate =
+              trimmed.startsWith("{") || trimmed.startsWith("```");
+            if (!toolCallCandidate) onChunk(output);
           }
-        } else if (!jsonCandidate) {
+        } else if (!toolCallCandidate) {
           onChunk(text);
         }
       }
@@ -269,7 +271,7 @@ export class ChatHarness {
       const toolCall = this.tool ? parseToolCall(output) : null;
 
       if (!toolCall) {
-        if (jsonCandidate !== false) onChunk(output);
+        if (toolCallCandidate !== false) onChunk(output);
         this.messages = [...nextMessages, firstResponse];
         return firstResponse;
       }
