@@ -83,11 +83,14 @@ export class ChatHarness {
   private listeners = new Set<HarnessListener>();
   private nextCallId = 1;
   private latestContextUsage: ModelContextUsage | null = null;
+  private readonly tools: StructuredToolInterface[];
 
   constructor(
     private readonly model: HarnessModel,
-    private readonly tool?: StructuredToolInterface,
-  ) {}
+    toolOrTools: StructuredToolInterface | StructuredToolInterface[] = [],
+  ) {
+    this.tools = Array.isArray(toolOrTools) ? toolOrTools : [toolOrTools];
+  }
 
   private snapshot(message: BaseMessage): MessageSnapshot {
     return {
@@ -105,8 +108,8 @@ export class ChatHarness {
   }
 
   private messagesForModel(messages: BaseMessage[]) {
-    if (!this.tool) return messages;
-    return [new SystemMessage(toolInstructions(this.tool)), ...messages];
+    if (this.tools.length === 0) return messages;
+    return [new SystemMessage(toolInstructions(this.tools)), ...messages];
   }
 
   private async invokeModel(messages: BaseMessage[]) {
@@ -147,7 +150,8 @@ export class ChatHarness {
     toolCallId: string,
     callId: number,
   ) {
-    if (!this.tool || toolCall.tool !== this.tool.name) {
+    const tool = this.tools.find((candidate) => candidate.name === toolCall.tool);
+    if (!tool) {
       throw new Error(`Unknown tool requested: ${toolCall.tool}`);
     }
 
@@ -155,12 +159,12 @@ export class ChatHarness {
       type: "tool_start",
       callId,
       toolCallId,
-      tool: this.tool.name,
+      tool: tool.name,
       args: toolCall.args,
       timestamp: Date.now(),
     });
 
-    const result = await this.tool.invoke(toolCall.args);
+    const result = await tool.invoke(toolCall.args);
     const content =
       typeof result === "string"
         ? result
@@ -172,7 +176,7 @@ export class ChatHarness {
       type: "tool_end",
       callId,
       toolCallId,
-      tool: this.tool.name,
+      tool: tool.name,
       result: content,
       timestamp: Date.now(),
     });
@@ -180,7 +184,7 @@ export class ChatHarness {
     return new ToolMessage({
       content,
       tool_call_id: toolCallId,
-      name: this.tool.name,
+      name: tool.name,
     });
   }
 
@@ -197,7 +201,8 @@ export class ChatHarness {
   async run(input: string) {
     const nextMessages = [...this.messages, new HumanMessage(input)];
     const first = await this.invokeModel(this.messagesForModel(nextMessages));
-    const toolCall = this.tool ? parseToolCall(first.response.content.toString()) : null;
+    const toolCall =
+      this.tools.length > 0 ? parseToolCall(first.response.content.toString()) : null;
 
     if (!toolCall) {
       this.messages = [...nextMessages, first.response];
@@ -268,7 +273,7 @@ export class ChatHarness {
         timestamp: Date.now(),
       });
 
-      const toolCall = this.tool ? parseToolCall(output) : null;
+      const toolCall = this.tools.length > 0 ? parseToolCall(output) : null;
 
       if (!toolCall) {
         if (toolCallCandidate !== false) onChunk(output);

@@ -6,20 +6,26 @@ export type ToolCallRequest = {
   args: Record<string, unknown>;
 };
 
-export function toolInstructions(tool: StructuredToolInterface): string {
-  return [
-    "You have access to one tool.",
-    "Use it when it is needed to answer the user's request accurately.",
-    "You may request the tool at most once per user message.",
-    "If you need the tool, reply with ONLY a JSON object in this exact shape:",
-    '{"type":"tool_call","tool":"<tool name>","args":{...}}',
-    "Do not wrap the JSON in Markdown or add any other text.",
-    "After a tool result is provided, answer the user normally and do not request another tool.",
-    "If no tool is needed, answer the user normally.",
-    "",
+export function toolInstructions(tools: StructuredToolInterface[]): string {
+  const toolDescriptions = tools.flatMap((tool) => [
     `Tool name: ${tool.name}`,
     `Description: ${tool.description}`,
     `Arguments JSON Schema: ${JSON.stringify(tool.schema)}`,
+    "",
+  ]);
+
+  return [
+    "You have access to the tools listed below.",
+    "Use a tool when it is needed to answer the user's request accurately.",
+    "You may request at most one tool per user message.",
+    "If you need a tool, reply with ONLY a JSON object in this exact shape:",
+    '{"type":"tool_call","tool":"<tool name>","args":{...}}',
+    "Do not wrap the JSON in Markdown or add any other text.",
+    "Choose the tool whose name and description best match the request.",
+    "After a tool result is provided, answer the user normally and do not request another tool.",
+    "If no tool is needed, answer the user normally.",
+    "",
+    ...toolDescriptions,
   ].join("\n");
 }
 
