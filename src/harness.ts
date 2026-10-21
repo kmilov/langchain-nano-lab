@@ -20,36 +20,18 @@ import {
   type ToolCallRequest,
 } from "./tools/protocol";
 
+export const MAX_TOOL_STEPS = 5;
+
 export type MessageSnapshot = {
   role: string;
   content: string;
 };
 
 export type HarnessEvent =
-  | {
-      type: "llm_start";
-      callId: number;
-      messages: MessageSnapshot[];
-      timestamp: number;
-    }
-  | {
-      type: "llm_chunk";
-      callId: number;
-      content: string;
-      timestamp: number;
-    }
-  | {
-      type: "llm_end";
-      callId: number;
-      message: MessageSnapshot;
-      timestamp: number;
-    }
-  | {
-      type: "llm_error";
-      callId: number;
-      error: string;
-      timestamp: number;
-    }
+  | { type: "llm_start"; callId: number; messages: MessageSnapshot[]; timestamp: number }
+  | { type: "llm_chunk"; callId: number; content: string; timestamp: number }
+  | { type: "llm_end"; callId: number; message: MessageSnapshot; timestamp: number }
+  | { type: "llm_error"; callId: number; error: string; timestamp: number }
   | {
       type: "tool_start";
       callId: number;
@@ -68,18 +50,10 @@ export type HarnessEvent =
     };
 
 type HarnessListener = (event: HarnessEvent) => void;
-type HarnessModel = BaseChatModel<BaseChatModelCallOptions> &
-  Partial<ContextUsageProvider>;
+type HarnessModel = BaseChatModel<BaseChatModelCallOptions> & Partial<ContextUsageProvider>;
 
 export class ChatHarness {
-  /**
-   * The harness owns all the message history,
-   * even though Chrome API keeps its own state,
-   * we have more control in the side of harness for tools
-   * implementation for instance
-   */
   private messages: BaseMessage[] = [];
-
   private listeners = new Set<HarnessListener>();
   private nextCallId = 1;
   private latestContextUsage: ModelContextUsage | null = null;
@@ -93,10 +67,7 @@ export class ChatHarness {
   }
 
   private snapshot(message: BaseMessage): MessageSnapshot {
-    return {
-      role: message.getType(),
-      content: message.content.toString(),
-    };
+    return { role: message.getType(), content: message.content.toString() };
   }
 
   private emit(event: HarnessEvent) {
@@ -114,7 +85,6 @@ export class ChatHarness {
 
   private async invokeModel(messages: BaseMessage[]) {
     const callId = this.nextCallId++;
-
     this.emit({
       type: "llm_start",
       callId,
@@ -125,7 +95,55 @@ export class ChatHarness {
     try {
       const response = await this.model.invoke(messages);
       this.refreshContextUsage();
+      this.emit({
+        type: "llm_end",
+        callId,
+        message: this.snapshot(response),
+        timestamp: Date.now(),
+      });
+      return { callId, response };
+    } catch (error) {
+      this.emit({
+        type: "llm_error",
+        callId,
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: Date.now(),
+      });
+      throw error;
+    }
+  }
 
+  private async streamModel(messages: BaseMessage[], onChunk: (chunk: string) => void) {
+    const callId = this.nextCallId++;
+    this.emit({
+      type: "llm_start",
+      callId,
+      messages: messages.map((message) => this.snapshot(message)),
+      timestamp: Date.now(),
+    });
+
+    try {
+      const stream = await this.model.stream(messages);
+      let output = "";
+      let toolCallCandidate: boolean | null = null;
+
+      for await (const chunk of stream) {
+        const text = chunk.content.toString();
+        output += text;
+
+        if (toolCallCandidate === null) {
+          const trimmed = output.trimStart();
+          if (trimmed.length > 0) {
+            toolCallCandidate = trimmed.startsWith("{") || trimmed.startsWith("```");
+            if (!toolCallCandidate) onChunk(output);
+          }
+        } else if (!toolCallCandidate) {
+          onChunk(text);
+        }
+      }
+
+      const response = new AIMessage(output);
+      this.refreshContextUsage();
       this.emit({
         type: "llm_end",
         callId,
@@ -133,7 +151,7 @@ export class ChatHarness {
         timestamp: Date.now(),
       });
 
-      return { callId, response };
+      return { callId, response, toolCallCandidate };
     } catch (error) {
       this.emit({
         type: "llm_error",
@@ -151,9 +169,7 @@ export class ChatHarness {
     callId: number,
   ) {
     const tool = this.tools.find((candidate) => candidate.name === toolCall.tool);
-    if (!tool) {
-      throw new Error(`Unknown tool requested: ${toolCall.tool}`);
-    }
+    if (!tool) throw new Error(`Unknown tool requested: ${toolCall.tool}`);
 
     this.emit({
       type: "tool_start",
@@ -181,11 +197,7 @@ export class ChatHarness {
       timestamp: Date.now(),
     });
 
-    return new ToolMessage({
-      content,
-      tool_call_id: toolCallId,
-      name: tool.name,
-    });
+    return new ToolMessage({ content, tool_call_id: toolCallId, name: tool.name });
   }
 
   subscribe(listener: HarnessListener) {
@@ -193,149 +205,63 @@ export class ChatHarness {
     return () => this.listeners.delete(listener);
   }
 
-  /**
-   * Runs a single message. no stream
-   * @param input message to the LLM
-   * @returns
-   */
   async run(input: string) {
-    const nextMessages = [...this.messages, new HumanMessage(input)];
-    const first = await this.invokeModel(this.messagesForModel(nextMessages));
-    const toolCall =
-      this.tools.length > 0 ? parseToolCall(first.response.content.toString()) : null;
+    let workingMessages = [...this.messages, new HumanMessage(input)];
+    let toolSteps = 0;
 
-    if (!toolCall) {
-      this.messages = [...nextMessages, first.response];
-      return first.response;
-    }
-
-    const toolMessage = await this.executeTool(
-      toolCall,
-      `tool-${first.callId}`,
-      first.callId,
-    );
-    const workingMessages = [...nextMessages, first.response, toolMessage];
-    const final = await this.invokeModel(this.messagesForModel(workingMessages));
-
-    this.messages = [...workingMessages, final.response];
-    return final.response;
-  }
-
-  /**
-   * Streams normal answers immediately. A response that begins with raw JSON
-   * or a fenced JSON block is buffered until the harness can determine whether
-   * it is a tool request.
-   *
-   * @param input message to the LLM
-   * @param onChunk fn to process every user-visible chunk
-   * @returns
-   */
-  async stream(input: string, onChunk: (chunk: string) => void) {
-    const nextMessages = [...this.messages, new HumanMessage(input)];
-    const firstMessages = this.messagesForModel(nextMessages);
-    const firstCallId = this.nextCallId++;
-
-    this.emit({
-      type: "llm_start",
-      callId: firstCallId,
-      messages: firstMessages.map((message) => this.snapshot(message)),
-      timestamp: Date.now(),
-    });
-
-    try {
-      const stream = await this.model.stream(firstMessages);
-      let output = "";
-      let toolCallCandidate: boolean | null = null;
-
-      for await (const chunk of stream) {
-        const text = chunk.content.toString();
-        output += text;
-
-        if (toolCallCandidate === null) {
-          const trimmed = output.trimStart();
-          if (trimmed.length > 0) {
-            toolCallCandidate =
-              trimmed.startsWith("{") || trimmed.startsWith("```");
-            if (!toolCallCandidate) onChunk(output);
-          }
-        } else if (!toolCallCandidate) {
-          onChunk(text);
-        }
-      }
-
-      const firstResponse = new AIMessage(output);
-      this.refreshContextUsage();
-
-      this.emit({
-        type: "llm_end",
-        callId: firstCallId,
-        message: this.snapshot(firstResponse),
-        timestamp: Date.now(),
-      });
-
-      const toolCall = this.tools.length > 0 ? parseToolCall(output) : null;
+    while (true) {
+      const modelCall = await this.invokeModel(this.messagesForModel(workingMessages));
+      const toolCall =
+        this.tools.length > 0 ? parseToolCall(modelCall.response.content.toString()) : null;
 
       if (!toolCall) {
-        if (toolCallCandidate !== false) onChunk(output);
-        this.messages = [...nextMessages, firstResponse];
-        return firstResponse;
+        this.messages = [...workingMessages, modelCall.response];
+        return modelCall.response;
+      }
+
+      if (toolSteps >= MAX_TOOL_STEPS) {
+        throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
       }
 
       const toolMessage = await this.executeTool(
         toolCall,
-        `tool-${firstCallId}`,
-        firstCallId,
+        `tool-${modelCall.callId}`,
+        modelCall.callId,
       );
-      const workingMessages = [...nextMessages, firstResponse, toolMessage];
-      const finalMessages = this.messagesForModel(workingMessages);
-      const finalCallId = this.nextCallId++;
+      workingMessages = [...workingMessages, modelCall.response, toolMessage];
+      toolSteps += 1;
+    }
+  }
 
-      this.emit({
-        type: "llm_start",
-        callId: finalCallId,
-        messages: finalMessages.map((message) => this.snapshot(message)),
-        timestamp: Date.now(),
-      });
+  async stream(input: string, onChunk: (chunk: string) => void) {
+    let workingMessages = [...this.messages, new HumanMessage(input)];
+    let toolSteps = 0;
 
-      try {
-        const finalStream = await this.model.stream(finalMessages);
-        let finalOutput = "";
+    while (true) {
+      const modelCall = await this.streamModel(
+        this.messagesForModel(workingMessages),
+        onChunk,
+      );
+      const output = modelCall.response.content.toString();
+      const toolCall = this.tools.length > 0 ? parseToolCall(output) : null;
 
-        for await (const chunk of finalStream) {
-          const text = chunk.content.toString();
-          finalOutput += text;
-          onChunk(text);
-        }
-
-        const finalResponse = new AIMessage(finalOutput);
-        this.refreshContextUsage();
-        this.messages = [...workingMessages, finalResponse];
-
-        this.emit({
-          type: "llm_end",
-          callId: finalCallId,
-          message: this.snapshot(finalResponse),
-          timestamp: Date.now(),
-        });
-
-        return finalResponse;
-      } catch (error) {
-        this.emit({
-          type: "llm_error",
-          callId: finalCallId,
-          error: error instanceof Error ? error.message : String(error),
-          timestamp: Date.now(),
-        });
-        throw error;
+      if (!toolCall) {
+        if (modelCall.toolCallCandidate !== false) onChunk(output);
+        this.messages = [...workingMessages, modelCall.response];
+        return modelCall.response;
       }
-    } catch (error) {
-      this.emit({
-        type: "llm_error",
-        callId: firstCallId,
-        error: error instanceof Error ? error.message : String(error),
-        timestamp: Date.now(),
-      });
-      throw error;
+
+      if (toolSteps >= MAX_TOOL_STEPS) {
+        throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
+      }
+
+      const toolMessage = await this.executeTool(
+        toolCall,
+        `tool-${modelCall.callId}`,
+        modelCall.callId,
+      );
+      workingMessages = [...workingMessages, modelCall.response, toolMessage];
+      toolSteps += 1;
     }
   }
 
