@@ -187,7 +187,7 @@ export class ChatHarness {
     });
 
     const result = await tool.invoke(toolCall.args);
-    const content =
+    const resultContent =
       typeof result === "string"
         ? result
         : result && typeof result === "object" && "content" in result
@@ -199,8 +199,14 @@ export class ChatHarness {
       callId,
       toolCallId,
       tool: tool.name,
-      result: content,
+      result: resultContent,
       timestamp: Date.now(),
+    });
+
+    const content = JSON.stringify({
+      tool: tool.name,
+      args: toolCall.args,
+      result: resultContent,
     });
 
     return new ToolMessage({ content, tool_call_id: toolCallId, name: tool.name });
