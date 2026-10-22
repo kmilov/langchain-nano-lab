@@ -21,7 +21,7 @@ import {
 } from "./tools/protocol";
 
 export const MAX_TOOL_STEPS = 5;
-export const CONTEXT_COMPACTION_THRESHOLD = 0.1;
+export const CONTEXT_COMPACTION_THRESHOLD = 0.3;
 export const RECENT_MESSAGES_TO_KEEP = 6;
 
 const SUMMARY_SYSTEM_PROMPT = [
@@ -259,16 +259,40 @@ export class ChatHarness {
     callId: number,
   ) {
     const tool = this.tools.find((candidate) => candidate.name === toolCall.tool);
-    if (!tool) throw new Error(`Unknown tool requested: ${toolCall.tool}`);
 
     this.emit({
       type: "tool_start",
       callId,
       toolCallId,
-      tool: tool.name,
+      tool: toolCall.tool,
       args: toolCall.args,
       timestamp: Date.now(),
     });
+
+    if (!tool) {
+      const resultContent = `Tool "${toolCall.tool}" is not available. Do not request it again. Answer the user without using that tool.`;
+
+      this.emit({
+        type: "tool_end",
+        callId,
+        toolCallId,
+        tool: toolCall.tool,
+        result: resultContent,
+        timestamp: Date.now(),
+      });
+
+      const content = JSON.stringify({
+        tool: toolCall.tool,
+        args: toolCall.args,
+        error: resultContent,
+      });
+
+      return new ToolMessage({
+        content,
+        tool_call_id: toolCallId,
+        name: toolCall.tool,
+      });
+    }
 
     const result = await tool.invoke(toolCall.args);
     const resultContent =
