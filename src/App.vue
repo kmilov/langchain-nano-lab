@@ -5,7 +5,12 @@ import {
   SYSTEM_PROMPT,
   type ChromeAvailability,
 } from "./adapters/ChromeLanguageModelAdapter";
-import { ChatHarness, type HarnessEvent } from "./harness";
+import {
+  ChatHarness,
+  CONTEXT_COMPACTION_THRESHOLD,
+  RECENT_MESSAGES_TO_KEEP,
+  type HarnessEvent,
+} from "./harness";
 import type { ModelContextUsage } from "./model/capabilities";
 import { calculatorTool } from "./tools/calculator";
 import { wordCountTool } from "./tools/wordCount";
@@ -35,6 +40,9 @@ const busy = ref(false);
 const messages = ref<ChatMessage[]>([]);
 const historySize = ref(0);
 const contextUsage = ref<ModelContextUsage>({ usedTokens: 0, maxTokens: 0 });
+const memorySummary = ref("");
+const summarizedMessageCount = ref(0);
+const recentMessageCount = ref(0);
 const messagesEl = ref<HTMLElement | null>(null);
 const activeTab = ref<SideTab>("code");
 const debugEvents = ref<HarnessEvent[]>([]);
@@ -77,6 +85,8 @@ const debugCalls = computed<DebugCall[]>(() => {
   const calls = new Map<number, DebugCall>();
 
   for (const event of debugEvents.value) {
+    if (event.type === "context_compacted") continue;
+
     const call = calls.get(event.callId) ?? { callId: event.callId };
 
     if (event.type === "llm_start") call.start = event;
@@ -90,6 +100,13 @@ const debugCalls = computed<DebugCall[]>(() => {
 
   return [...calls.values()];
 });
+
+const compactionEvents = computed(() =>
+  debugEvents.value.filter(
+    (event): event is Extract<HarnessEvent, { type: "context_compacted" }> =>
+      event.type === "context_compacted",
+  ),
+);
 
 const adapterCode = `async *_streamResponseChunks(messages) {
   const session = await this.createSession(messages);
@@ -110,7 +127,9 @@ const adapterCode = `async *_streamResponseChunks(messages) {
   }
 }`;
 
-const harnessCode = `while (true) {
+const harnessCode = `await compactContextIfNeeded();
+
+while (true) {
   const modelCall = await streamModel(
     messagesForModel(workingMessages),
     onChunk,
@@ -135,6 +154,16 @@ function formatTokenCount(tokens: number) {
 
   const thousands = Math.round((tokens / 1000) * 10) / 10;
   return `${thousands.toString()}k`;
+}
+
+function refreshHarnessState() {
+  historySize.value = harness.history().length;
+  contextUsage.value = harness.contextUsage() ?? { usedTokens: 0, maxTokens: 0 };
+
+  const memory = harness.contextMemory();
+  memorySummary.value = memory.summary;
+  summarizedMessageCount.value = memory.summarizedMessageCount;
+  recentMessageCount.value = memory.recentMessageCount;
 }
 
 async function loadModelParams() {
@@ -179,8 +208,7 @@ async function sendMessage() {
       void scrollToBottom();
     });
 
-    historySize.value = harness.history().length;
-    contextUsage.value = harness.contextUsage() ?? { usedTokens: 0, maxTokens: 0 };
+    refreshHarnessState();
   } catch (error) {
     messages.value[assistantIndex] = {
       role: "error",
@@ -232,19 +260,19 @@ onMounted(async () => {
         <div class="sectionHeader">
           <div>
             <h1>Chat</h1>
-            <p>Streaming through LangChain, with multiple tools orchestrated by the Harness.</p>
+            <p>Streaming through LangChain, with tools and context memory orchestrated by the Harness.</p>
           </div>
           <div class="headerBadges">
             <span class="contextUsageLabel">{{ contextUsageLabel }}</span>
-            <span class="step">v4 · tool loop · {{ historySize }} msgs</span>
+            <span class="step">v5 · context memory · {{ historySize }} msgs</span>
           </div>
         </div>
 
         <div ref="messagesEl" class="messages">
           <div v-if="messages.length === 0" class="empty">
             <div class="emptyMark">⌁</div>
-            <strong>Try: “Multiply 37 by 19, then count the words in ‘local agents are fun’.”</strong>
-            <span>Open Debug to see Nano choose tools, receive results, and continue the loop.</span>
+            <strong>Keep chatting and watch the context meter grow.</strong>
+            <span>At 70%, the Harness summarizes older messages and keeps the latest 6 verbatim.</span>
           </div>
 
           <div
@@ -288,7 +316,7 @@ onMounted(async () => {
           <div class="sectionHeader codeHeading">
             <div>
               <h2>Code</h2>
-              <p>v4 adds multiple tools, routing by name, and a bounded model → tool loop.</p>
+              <p>v5 keeps durable history separate from the smaller context sent to Nano.</p>
             </div>
           </div>
 
@@ -298,13 +326,13 @@ onMounted(async () => {
           </section>
 
           <section class="codeBlock">
-            <div class="codeBar">2 · ChatHarness · bounded tool loop</div>
+            <div class="codeBar">2 · ChatHarness · memory + bounded tool loop</div>
             <pre><code>{{ harnessCode }}</code></pre>
           </section>
 
           <div class="nextSteps">
-            <span>Tools</span>
-            <strong>calculator · word_count · max 5 tool steps</strong>
+            <span>Context policy</span>
+            <strong>{{ Math.round(CONTEXT_COMPACTION_THRESHOLD * 100) }}% threshold · keep {{ RECENT_MESSAGES_TO_KEEP }} recent messages</strong>
           </div>
         </template>
 
@@ -312,7 +340,7 @@ onMounted(async () => {
           <div class="sectionHeader codeHeading debugHeader">
             <div>
               <h2>Debug</h2>
-              <p>Every model call and hidden tool execution in the loop is visible here.</p>
+              <p>Agent calls, summary calls, tools, and compacted memory are visible here.</p>
             </div>
             <button class="clearButton" :disabled="debugEvents.length === 0" @click="clearDebug">Clear</button>
           </div>
@@ -324,6 +352,26 @@ onMounted(async () => {
                 <span>Chrome session initialPrompts</span>
               </div>
               <pre>{{ SYSTEM_PROMPT }}</pre>
+            </section>
+
+            <section class="debugCard">
+              <div class="debugMeta">
+                <strong>Context memory</strong>
+                <span>{{ summarizedMessageCount }} summarized · {{ recentMessageCount }} recent</span>
+              </div>
+              <pre>{{ memorySummary || `No summary yet. Compaction starts at ${Math.round(CONTEXT_COMPACTION_THRESHOLD * 100)}% context.` }}</pre>
+            </section>
+
+            <section
+              v-for="(event, index) in compactionEvents"
+              :key="`compaction-${index}-${event.timestamp}`"
+              class="debugCard"
+            >
+              <div class="debugMeta">
+                <strong>Context compacted</strong>
+                <span>{{ event.summarizedMessageCount }} messages · {{ eventTime(event) }}</span>
+              </div>
+              <pre>{{ event.summary }}</pre>
             </section>
 
             <section class="debugCard">
@@ -345,7 +393,7 @@ onMounted(async () => {
               open
             >
               <summary class="debugMeta">
-                <strong>LLM Call #{{ call.callId }}</strong>
+                <strong>{{ call.start?.kind === "summary" ? "Summary" : "LLM" }} Call #{{ call.callId }}</strong>
                 <span>
                   {{ call.error ? "error" : call.end ? "complete" : "running" }}
                   · {{ call.start ? eventTime(call.start) : "" }}
