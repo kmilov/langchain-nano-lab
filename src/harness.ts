@@ -80,15 +80,6 @@ export type HarnessEvent =
 type HarnessListener = (event: HarnessEvent) => void;
 type HarnessModel = BaseChatModel<BaseChatModelCallOptions> & Partial<ContextUsageProvider>;
 
-function detectToolCallCandidate(output: string): boolean | null {
-  const trimmed = output.trimStart();
-  if (!trimmed) return null;
-  if (trimmed.startsWith("{")) return true;
-  if (trimmed.startsWith("```")) return true;
-  if ("```".startsWith(trimmed)) return null;
-  return false;
-}
-
 export class ChatHarness {
   private messages: BaseMessage[] = [];
   private listeners = new Set<HarnessListener>();
@@ -176,6 +167,8 @@ export class ChatHarness {
   private async streamModel(messages: BaseMessage[], onChunk: (chunk: string) => void) {
     const callId = this.nextCallId++;
     const kind: ModelCallKind = "agent";
+    const bufferUntilComplete = this.tools.length > 0;
+
     this.emit({
       type: "llm_start",
       callId,
@@ -187,18 +180,12 @@ export class ChatHarness {
     try {
       const stream = await this.model.stream(messages);
       let output = "";
-      let toolCallCandidate: boolean | null = null;
 
       for await (const chunk of stream) {
         const text = chunk.content.toString();
         output += text;
 
-        if (toolCallCandidate === null) {
-          toolCallCandidate = detectToolCallCandidate(output);
-          if (toolCallCandidate === false) onChunk(output);
-        } else if (!toolCallCandidate) {
-          onChunk(text);
-        }
+        if (!bufferUntilComplete) onChunk(text);
       }
 
       const response = new AIMessage(output);
@@ -211,7 +198,7 @@ export class ChatHarness {
         timestamp: Date.now(),
       });
 
-      return { callId, response, toolCallCandidate };
+      return { callId, response, bufferUntilComplete };
     } catch (error) {
       this.emit({
         type: "llm_error",
@@ -359,7 +346,7 @@ export class ChatHarness {
       const toolCall = this.tools.length > 0 ? parseToolCall(output) : null;
 
       if (!toolCall) {
-        if (modelCall.toolCallCandidate !== false) onChunk(output);
+        if (modelCall.bufferUntilComplete) onChunk(output);
         this.messages = [...workingMessages, modelCall.response];
         return modelCall.response;
       }

@@ -31,18 +31,9 @@ export function toolInstructions(tools: StructuredToolInterface[]): string {
   ].join("\n");
 }
 
-function stripOptionalCodeFence(content: string) {
-  const text = content.trim();
-  const match = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  return match ? match[1].trim() : text;
-}
-
-export function parseToolCall(content: string): ToolCallRequest | null {
-  const text = stripOptionalCodeFence(content);
-  if (!text.startsWith("{") || !text.endsWith("}")) return null;
-
+function parseToolCallJson(text: string): ToolCallRequest | null {
   try {
-    const value: unknown = JSON.parse(text);
+    const value: unknown = JSON.parse(text.trim());
     if (!value || typeof value !== "object") return null;
 
     const candidate = value as Record<string, unknown>;
@@ -64,4 +55,19 @@ export function parseToolCall(content: string): ToolCallRequest | null {
   } catch {
     return null;
   }
+}
+
+export function parseToolCall(content: string): ToolCallRequest | null {
+  const text = content.trim();
+
+  const direct = parseToolCallJson(text);
+  if (direct) return direct;
+
+  const fencedBlocks = text.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi);
+  for (const match of fencedBlocks) {
+    const embedded = parseToolCallJson(match[1]);
+    if (embedded) return embedded;
+  }
+
+  return null;
 }
