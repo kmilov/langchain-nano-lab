@@ -272,7 +272,7 @@ onMounted(async () => {
           <div v-if="messages.length === 0" class="empty">
             <div class="emptyMark">⌁</div>
             <strong>Keep chatting and watch the context meter grow.</strong>
-            <span>At 70%, the Harness summarizes older messages and keeps the latest 6 verbatim.</span>
+            <span>At 30%, the Harness summarizes older messages and keeps the latest 6 verbatim.</span>
           </div>
 
           <div
