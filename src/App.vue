@@ -9,6 +9,7 @@ import {
   ChatHarness,
   CONTEXT_COMPACTION_THRESHOLD,
   RECENT_MESSAGES_TO_KEEP,
+  type ChatHarnessState,
   type HarnessEvent,
 } from "./harness";
 import type { ModelContextUsage } from "./model/capabilities";
@@ -19,6 +20,11 @@ type Availability = "checking" | "unsupported" | ChromeAvailability;
 type ChatMessage = {
   role: "user" | "assistant" | "error";
   content: string;
+};
+type PersistedAppState = {
+  version: 1;
+  harness: ChatHarnessState;
+  messages: ChatMessage[];
 };
 type SideTab = "code" | "debug";
 type ModelParamsStatus = "loading" | "available" | "unsupported" | "error";
@@ -31,6 +37,7 @@ type DebugCall = {
   toolEnd?: Extract<HarnessEvent, { type: "tool_end" }>;
 };
 
+const STORAGE_KEY = "langchain-nano-lab:v6";
 const model = new ChromeLanguageModelAdapter({});
 const harness = new ChatHarness(model, [calculatorTool, wordCountTool]);
 
@@ -127,23 +134,18 @@ const adapterCode = `async *_streamResponseChunks(messages) {
   }
 }`;
 
-const harnessCode = `await compactContextIfNeeded();
+const persistenceCode = `const saved = localStorage.getItem(STORAGE_KEY);
+if (saved) {
+  const state = JSON.parse(saved);
+  harness.importState(state.harness);
+  messages.value = state.messages;
+}
 
-while (true) {
-  const modelCall = await streamModel(
-    messagesForModel(workingMessages),
-    onChunk,
-  );
-
-  const toolCall = parseToolCall(
-    modelCall.response.content.toString(),
-  );
-
-  if (!toolCall) return modelCall.response;
-
-  const toolMessage = await executeTool(toolCall);
-  workingMessages.push(modelCall.response, toolMessage);
-}`;
+localStorage.setItem(STORAGE_KEY, JSON.stringify({
+  version: 1,
+  harness: harness.exportState(),
+  messages: messages.value,
+}));`;
 
 function eventTime(event: HarnessEvent) {
   return new Date(event.timestamp).toLocaleTimeString();
@@ -164,6 +166,50 @@ function refreshHarnessState() {
   memorySummary.value = memory.summary;
   summarizedMessageCount.value = memory.summarizedMessageCount;
   recentMessageCount.value = memory.recentMessageCount;
+}
+
+function saveAppState() {
+  const state: PersistedAppState = {
+    version: 1,
+    harness: harness.exportState(),
+    messages: messages.value,
+  };
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function restoreAppState() {
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (!saved) return;
+
+  try {
+    const state = JSON.parse(saved) as PersistedAppState;
+    if (state.version !== 1 || !state.harness || !Array.isArray(state.messages)) {
+      throw new Error("Unsupported persisted app state.");
+    }
+
+    harness.importState(state.harness);
+    messages.value = state.messages.filter(
+      (message) =>
+        message &&
+        ["user", "assistant", "error"].includes(message.role) &&
+        typeof message.content === "string",
+    );
+    refreshHarnessState();
+  } catch {
+    localStorage.removeItem(STORAGE_KEY);
+    harness.clear();
+    messages.value = [];
+    refreshHarnessState();
+  }
+}
+
+function clearConversation() {
+  harness.clear();
+  messages.value = [];
+  debugEvents.value = [];
+  localStorage.removeItem(STORAGE_KEY);
+  refreshHarnessState();
 }
 
 async function loadModelParams() {
@@ -209,6 +255,7 @@ async function sendMessage() {
     });
 
     refreshHarnessState();
+    saveAppState();
   } catch (error) {
     messages.value[assistantIndex] = {
       role: "error",
@@ -232,6 +279,8 @@ function onComposerKeydown(event: KeyboardEvent) {
 }
 
 onMounted(async () => {
+  restoreAppState();
+  void scrollToBottom();
   void loadModelParams();
 
   try {
@@ -260,19 +309,20 @@ onMounted(async () => {
         <div class="sectionHeader">
           <div>
             <h1>Chat</h1>
-            <p>Streaming through LangChain, with tools and context memory orchestrated by the Harness.</p>
+            <p>Streaming through LangChain, with tools, context memory, and browser persistence.</p>
           </div>
           <div class="headerBadges">
             <span class="contextUsageLabel">{{ contextUsageLabel }}</span>
-            <span class="step">v5 · context memory · {{ historySize }} msgs</span>
+            <span class="step">v6 · persistent memory · {{ historySize }} msgs</span>
+            <button v-if="messages.length > 0" class="clearButton" @click="clearConversation">Clear chat</button>
           </div>
         </div>
 
         <div ref="messagesEl" class="messages">
           <div v-if="messages.length === 0" class="empty">
             <div class="emptyMark">⌁</div>
-            <strong>Keep chatting and watch the context meter grow.</strong>
-            <span>At 30%, the Harness summarizes older messages and keeps the latest 6 verbatim.</span>
+            <strong>Your agent state now survives a page refresh.</strong>
+            <span>At 30%, the Harness still summarizes older messages and keeps the latest 6 verbatim.</span>
           </div>
 
           <div
@@ -316,7 +366,7 @@ onMounted(async () => {
           <div class="sectionHeader codeHeading">
             <div>
               <h2>Code</h2>
-              <p>v5 keeps durable history separate from the smaller context sent to Nano.</p>
+              <p>v6 separates agent state from the browser storage mechanism.</p>
             </div>
           </div>
 
@@ -326,13 +376,13 @@ onMounted(async () => {
           </section>
 
           <section class="codeBlock">
-            <div class="codeBar">2 · ChatHarness · memory + bounded tool loop</div>
-            <pre><code>{{ harnessCode }}</code></pre>
+            <div class="codeBar">2 · Persistence · export / restore Harness state</div>
+            <pre><code>{{ persistenceCode }}</code></pre>
           </section>
 
           <div class="nextSteps">
-            <span>Context policy</span>
-            <strong>{{ Math.round(CONTEXT_COMPACTION_THRESHOLD * 100) }}% threshold · keep {{ RECENT_MESSAGES_TO_KEEP }} recent messages</strong>
+            <span>Persistence policy</span>
+            <strong>localStorage · save after completed turns · restore on page load</strong>
           </div>
         </template>
 
@@ -356,7 +406,7 @@ onMounted(async () => {
 
             <section class="debugCard">
               <div class="debugMeta">
-                <strong>Context memory</strong>
+                <strong>Persistent Harness state</strong>
                 <span>{{ summarizedMessageCount }} summarized · {{ recentMessageCount }} recent</span>
               </div>
               <pre>{{ memorySummary || `No summary yet. Compaction starts at ${Math.round(CONTEXT_COMPACTION_THRESHOLD * 100)}% context.` }}</pre>
@@ -383,7 +433,7 @@ onMounted(async () => {
             </section>
 
             <div v-if="debugCalls.length === 0" class="debugEmpty">
-              No model calls yet. Send a chat message to populate the trace.
+              No model calls in this page session yet. Restored conversation state is still available to the Harness.
             </div>
 
             <details

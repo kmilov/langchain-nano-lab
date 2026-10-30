@@ -35,6 +35,20 @@ export type MessageSnapshot = {
   content: string;
 };
 
+export type PersistedHarnessMessage = {
+  role: "human" | "ai" | "tool";
+  content: string;
+  toolCallId?: string;
+  name?: string;
+};
+
+export type ChatHarnessState = {
+  version: 1;
+  messages: PersistedHarnessMessage[];
+  memorySummary: string;
+  summarizedMessageCount: number;
+};
+
 export type ModelCallKind = "agent" | "summary";
 
 export type HarnessEvent =
@@ -98,6 +112,40 @@ export class ChatHarness {
 
   private snapshot(message: BaseMessage): MessageSnapshot {
     return { role: message.getType(), content: message.content.toString() };
+  }
+
+  private persistMessage(message: BaseMessage): PersistedHarnessMessage {
+    const role = message.getType();
+    const content = message.content.toString();
+
+    if (role === "human" || role === "ai") return { role, content };
+
+    if (role === "tool") {
+      const toolMessage = message as ToolMessage;
+      return {
+        role: "tool",
+        content,
+        toolCallId: toolMessage.tool_call_id,
+        name: toolMessage.name,
+      };
+    }
+
+    throw new Error(`Cannot persist unsupported message type: ${role}`);
+  }
+
+  private restoreMessage(message: PersistedHarnessMessage): BaseMessage {
+    if (message.role === "human") return new HumanMessage(message.content);
+    if (message.role === "ai") return new AIMessage(message.content);
+
+    if (!message.toolCallId) {
+      throw new Error("Persisted tool message is missing toolCallId.");
+    }
+
+    return new ToolMessage({
+      content: message.content,
+      tool_call_id: message.toolCallId,
+      name: message.name,
+    });
   }
 
   private emit(event: HarnessEvent) {
@@ -405,10 +453,38 @@ export class ChatHarness {
     };
   }
 
+  exportState(): ChatHarnessState {
+    return {
+      version: 1,
+      messages: this.messages.map((message) => this.persistMessage(message)),
+      memorySummary: this.memorySummary,
+      summarizedMessageCount: this.summarizedMessageCount,
+    };
+  }
+
+  importState(state: ChatHarnessState) {
+    if (state.version !== 1 || !Array.isArray(state.messages)) {
+      throw new Error("Unsupported persisted Harness state.");
+    }
+
+    const messages = state.messages.map((message) => this.restoreMessage(message));
+    const summarizedMessageCount = Math.max(
+      0,
+      Math.min(messages.length, Math.floor(state.summarizedMessageCount || 0)),
+    );
+
+    this.messages = messages;
+    this.memorySummary = typeof state.memorySummary === "string" ? state.memorySummary : "";
+    this.summarizedMessageCount = summarizedMessageCount;
+    this.latestContextUsage = null;
+    this.nextCallId = 1;
+  }
+
   clear() {
     this.messages = [];
     this.latestContextUsage = null;
     this.memorySummary = "";
     this.summarizedMessageCount = 0;
+    this.nextCallId = 1;
   }
 }
