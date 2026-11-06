@@ -17,6 +17,12 @@ export function toolInstructions(tools: StructuredToolInterface[]): string {
   return [
     "You have access to the tools listed below.",
     "Use a tool when it is needed to answer the user's request accurately.",
+    ...(tools.some((tool) => tool.name === "word_count")
+      ? [
+          "For every word-count question, you MUST use word_count. Never estimate or count words yourself.",
+          "If the user asks to count words in \"this sentence\" without supplying another sentence, pass their entire latest user message as the text.",
+        ]
+      : []),
     "Request at most one tool at a time.",
     "If you need a tool, reply with ONLY a JSON object in this exact shape:",
     '{"type":"tool_call","tool":"<tool name>","args":{...}}',

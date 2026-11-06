@@ -118,7 +118,9 @@ export class ChatHarness {
     const role = message.getType();
     const content = message.content.toString();
 
-    if (role === "human" || role === "ai") return { role, content };
+    if (role === "human" || role === "ai") {
+      return { role, content: role === "ai" ? content.trimEnd() : content };
+    }
 
     if (role === "tool") {
       const toolMessage = message as ToolMessage;
@@ -135,7 +137,7 @@ export class ChatHarness {
 
   private restoreMessage(message: PersistedHarnessMessage): BaseMessage {
     if (message.role === "human") return new HumanMessage(message.content);
-    if (message.role === "ai") return new AIMessage(message.content);
+    if (message.role === "ai") return new AIMessage(message.content.trimEnd());
 
     if (!message.toolCallId) {
       throw new Error("Persisted tool message is missing toolCallId.");
@@ -236,7 +238,7 @@ export class ChatHarness {
         if (!bufferUntilComplete) onChunk(text);
       }
 
-      const response = new AIMessage(output);
+      const response = new AIMessage(output.trimEnd());
       this.refreshContextUsage();
       this.emit({
         type: "llm_end",

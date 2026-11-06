@@ -189,12 +189,17 @@ function restoreAppState() {
     }
 
     harness.importState(state.harness);
-    messages.value = state.messages.filter(
-      (message) =>
-        message &&
-        ["user", "assistant", "error"].includes(message.role) &&
-        typeof message.content === "string",
-    );
+    messages.value = state.messages
+      .filter(
+        (message) =>
+          message &&
+          ["user", "assistant", "error"].includes(message.role) &&
+          typeof message.content === "string",
+      )
+      .map((message) => ({
+        ...message,
+        content: message.role === "assistant" ? message.content.trimEnd() : message.content,
+      }));
     refreshHarnessState();
   } catch {
     localStorage.removeItem(STORAGE_KEY);
@@ -254,6 +259,7 @@ async function sendMessage() {
       void scrollToBottom();
     });
 
+    messages.value[assistantIndex].content = messages.value[assistantIndex].content.trimEnd();
     refreshHarnessState();
     saveAppState();
   } catch (error) {
