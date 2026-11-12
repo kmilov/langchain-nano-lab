@@ -10,6 +10,11 @@ import {
   type BaseMessage,
 } from "@langchain/core/messages";
 import type { StructuredToolInterface } from "@langchain/core/tools";
+import {
+  normalizeAgentTool,
+  type AgentTool,
+  type RegisteredAgentTool,
+} from "./tools/routing";
 import type {
   ContextUsageProvider,
   ModelContextUsage,
@@ -101,13 +106,16 @@ export class ChatHarness {
   private latestContextUsage: ModelContextUsage | null = null;
   private memorySummary = "";
   private summarizedMessageCount = 0;
+  private readonly registeredTools: RegisteredAgentTool[];
   private readonly tools: StructuredToolInterface[];
 
   constructor(
     private readonly model: HarnessModel,
-    toolOrTools: StructuredToolInterface | StructuredToolInterface[] = [],
+    toolOrTools: AgentTool | AgentTool[] = [],
   ) {
-    this.tools = Array.isArray(toolOrTools) ? toolOrTools : [toolOrTools];
+    const tools = Array.isArray(toolOrTools) ? toolOrTools : [toolOrTools];
+    this.registeredTools = tools.map((tool) => normalizeAgentTool(tool));
+    this.tools = this.registeredTools.map((registered) => registered.tool);
   }
 
   private snapshot(message: BaseMessage): MessageSnapshot {
@@ -303,6 +311,44 @@ export class ChatHarness {
     });
   }
 
+  private requiredToolCall(input: string): ToolCallRequest | null {
+    for (const registered of this.registeredTools) {
+      if (registered.routing?.mode !== "required") continue;
+
+      const args = registered.routing.route(input);
+      if (args) {
+        return {
+          type: "tool_call",
+          tool: registered.tool.name,
+          args,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  private async executeRequiredTool(
+    input: string,
+    workingMessages: BaseMessage[],
+  ): Promise<BaseMessage[] | null> {
+    const toolCall = this.requiredToolCall(input);
+    if (!toolCall) return null;
+
+    const callId = this.nextCallId++;
+    const toolMessage = await this.executeTool(
+      toolCall,
+      `tool-${callId}`,
+      callId,
+    );
+
+    return [
+      ...workingMessages,
+      new AIMessage(JSON.stringify(toolCall)),
+      toolMessage,
+    ];
+  }
+
   private async executeTool(
     toolCall: ToolCallRequest,
     toolCallId: string,
@@ -381,6 +427,12 @@ export class ChatHarness {
     let workingMessages = [...this.messages, new HumanMessage(input)];
     let toolSteps = 0;
 
+    const requiredMessages = await this.executeRequiredTool(input, workingMessages);
+    if (requiredMessages) {
+      workingMessages = requiredMessages;
+      toolSteps += 1;
+    }
+
     while (true) {
       const modelCall = await this.invokeModel(this.messagesForModel(workingMessages));
       const toolCall =
@@ -410,6 +462,12 @@ export class ChatHarness {
 
     let workingMessages = [...this.messages, new HumanMessage(input)];
     let toolSteps = 0;
+
+    const requiredMessages = await this.executeRequiredTool(input, workingMessages);
+    if (requiredMessages) {
+      workingMessages = requiredMessages;
+      toolSteps += 1;
+    }
 
     while (true) {
       const modelCall = await this.streamModel(
