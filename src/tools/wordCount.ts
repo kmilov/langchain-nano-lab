@@ -27,14 +27,32 @@ const rawWordCountTool = tool(
 );
 
 
-export const wordCountTool = registerAgentTool(rawWordCountTool, {
-  mode: "required",
-  route(input) {
-    if (!/\b(count|how many)\b.*\bwords?\b|\bwords?\b.*\b(count|how many)\b/i.test(input)) {
-      return null;
-    }
+export const wordCountTool = registerAgentTool(
+  rawWordCountTool,
+  {
+    mode: "required",
+    route(input) {
+      if (!/\b(count|how many)\b.*\bwords?\b|\bwords?\b.*\b(count|how many)\b/i.test(input)) {
+        return null;
+      }
 
-    const quoted = input.match(/["“](.+?)["”]/);
-    return { text: quoted?.[1] ?? input };
+      const quoted = input.match(/["“](.+?)["”]/);
+      return { text: quoted?.[1] ?? input };
+    },
   },
-});
+  {
+    useFor: [
+      "Counting words in user-supplied text.",
+      "Counting words in text produced by an earlier tool step.",
+    ],
+    notFor: [
+      "Counting people, objects, places, money, or other real-world quantities.",
+      "Population questions.",
+      "Retrieving facts or external information.",
+    ],
+    accepts(input) {
+      return /\bword(?:s| count)?\b/i.test(input);
+    },
+    groundedArgs: ["text"],
+  },
+);

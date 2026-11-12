@@ -11,6 +11,7 @@ export type ToolCapability = {
   useFor: string[];
   notFor?: string[];
   accepts?: (input: string, args: Record<string, unknown>) => boolean;
+  groundedArgs?: string[];
 };
 
 export type RegisteredAgentTool = {

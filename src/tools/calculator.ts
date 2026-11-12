@@ -101,5 +101,9 @@ export const calculatorTool = registerAgentTool(
       "Looking up facts or numeric values that are not already available.",
       "Population, weather, search, or other information retrieval.",
     ],
+    accepts(input) {
+      return !/\b(population|people live|weather|search|look up|lookup)\b/i.test(input);
+    },
+    groundedArgs: ["a", "b"],
   },
 );
