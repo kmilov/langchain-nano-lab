@@ -494,11 +494,21 @@ export class ChatHarness {
   private async planTools(input: string, workingMessages: BaseMessage[]) {
     if (this.tools.length === 0) return null;
 
+    const priorVisible = this.messages
+      .slice(this.summarizedMessageCount)
+      .filter(
+        (message) =>
+          message.getType() !== "tool" &&
+          !(message.getType() === "ai" && parseToolCall(message.content.toString())),
+      );
+
     const plannerMessages: BaseMessage[] = [
       new SystemMessage(plannerInstructions(this.registeredTools)),
-      ...this.messagesForModel(workingMessages).filter(
-        (message) => message.getType() !== "system",
-      ),
+      ...(this.memorySummary
+        ? [new SystemMessage(`Conversation memory from older messages:\n${this.memorySummary}`)]
+        : []),
+      ...priorVisible,
+      new HumanMessage(input),
     ];
 
     const call = await this.invokeModel(plannerMessages, "planner");
@@ -552,6 +562,79 @@ export class ChatHarness {
     return messages;
   }
 
+  private finalizerMessages(input: string, workingMessages: BaseMessage[]) {
+    const priorVisible = this.messages
+      .slice(this.summarizedMessageCount)
+      .filter(
+        (message) =>
+          message.getType() !== "tool" &&
+          !(message.getType() === "ai" && parseToolCall(message.content.toString())),
+      );
+    const currentTurn = workingMessages.slice(this.messages.length);
+
+    return [
+      new SystemMessage(FINALIZER_SYSTEM_PROMPT),
+      ...(this.memorySummary
+        ? [new SystemMessage(`Conversation memory from older messages:\n${this.memorySummary}`)]
+        : []),
+      ...priorVisible,
+      ...currentTurn,
+    ];
+  }
+
+  private async finalize(input: string, workingMessages: BaseMessage[]) {
+    return this.invokeModel(this.finalizerMessages(input, workingMessages), "finalizer");
+  }
+
+  private async streamFinalizer(
+    input: string,
+    workingMessages: BaseMessage[],
+    onChunk: (chunk: string) => void,
+  ) {
+    const callId = this.nextCallId++;
+    const kind: ModelCallKind = "finalizer";
+    const messages = this.finalizerMessages(input, workingMessages);
+
+    this.emit({
+      type: "llm_start",
+      callId,
+      kind,
+      messages: messages.map((message) => this.snapshot(message)),
+      timestamp: Date.now(),
+    });
+
+    try {
+      const stream = await this.model.stream(messages);
+      let output = "";
+
+      for await (const chunk of stream) {
+        const text = chunk.content.toString();
+        output += text;
+        onChunk(text);
+      }
+
+      const response = new AIMessage(output.trimEnd());
+      this.refreshContextUsage();
+      this.emit({
+        type: "llm_end",
+        callId,
+        kind,
+        message: this.snapshot(response),
+        timestamp: Date.now(),
+      });
+
+      return { callId, response };
+    } catch (error) {
+      this.emit({
+        type: "llm_error",
+        callId,
+        kind,
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: Date.now(),
+      });
+      throw error;
+    }
+  }
   private async executeTool(
     input: string,
     toolCall: ToolCallRequest,
@@ -658,98 +741,51 @@ export class ChatHarness {
     await this.compactContextIfNeeded();
 
     let workingMessages = [...this.messages, new HumanMessage(input)];
-    let toolSteps = 0;
-
     const plan = await this.planTools(input, workingMessages);
+
     if (plan && plan.steps.length > 0) {
       if (plan.steps.length > MAX_TOOL_STEPS) {
         throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
       }
-      workingMessages = await this.executePlan(input, plan.steps, workingMessages);
-      toolSteps = plan.steps.length;
+
+      const validation = this.validatePlan(input, plan.steps);
+      if (validation.valid) {
+        workingMessages = await this.executePlan(input, plan.steps, workingMessages);
+      }
     } else {
       const requiredMessages = await this.executeRequiredTool(input, workingMessages);
-      if (requiredMessages) {
-        workingMessages = requiredMessages;
-        toolSteps += 1;
-      }
+      if (requiredMessages) workingMessages = requiredMessages;
     }
 
-    while (true) {
-      const modelCall = await this.invokeModel(this.messagesForModel(workingMessages));
-      const toolCall =
-        this.tools.length > 0 ? parseToolCall(modelCall.response.content.toString()) : null;
-
-      if (!toolCall) {
-        this.messages = [...workingMessages, modelCall.response];
-        return modelCall.response;
-      }
-
-      if (toolSteps >= MAX_TOOL_STEPS) {
-        throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
-      }
-
-      const toolMessage = await this.executeTool(
-        input,
-        toolCall,
-        `tool-${modelCall.callId}`,
-        modelCall.callId,
-      );
-      workingMessages = [...workingMessages, modelCall.response, toolMessage];
-      toolSteps += 1;
-    }
+    const finalCall = await this.finalize(input, workingMessages);
+    this.messages = [...this.messages, new HumanMessage(input), finalCall.response];
+    return finalCall.response;
   }
 
   async stream(input: string, onChunk: (chunk: string) => void) {
     await this.compactContextIfNeeded();
 
     let workingMessages = [...this.messages, new HumanMessage(input)];
-    let toolSteps = 0;
-
     const plan = await this.planTools(input, workingMessages);
+
     if (plan && plan.steps.length > 0) {
       if (plan.steps.length > MAX_TOOL_STEPS) {
         throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
       }
-      workingMessages = await this.executePlan(input, plan.steps, workingMessages);
-      toolSteps = plan.steps.length;
+
+      const validation = this.validatePlan(input, plan.steps);
+      if (validation.valid) {
+        workingMessages = await this.executePlan(input, plan.steps, workingMessages);
+      }
     } else {
       const requiredMessages = await this.executeRequiredTool(input, workingMessages);
-      if (requiredMessages) {
-        workingMessages = requiredMessages;
-        toolSteps += 1;
-      }
+      if (requiredMessages) workingMessages = requiredMessages;
     }
 
-    while (true) {
-      const modelCall = await this.streamModel(
-        this.messagesForModel(workingMessages),
-        onChunk,
-      );
-      const output = modelCall.response.content.toString();
-      const toolCall = this.tools.length > 0 ? parseToolCall(output) : null;
-
-      if (!toolCall) {
-        if (modelCall.bufferUntilComplete) onChunk(output);
-        this.messages = [...workingMessages, modelCall.response];
-        return modelCall.response;
-      }
-
-      if (toolSteps >= MAX_TOOL_STEPS) {
-        throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
-      }
-
-      const toolMessage = await this.executeTool(
-        input,
-        toolCall,
-        `tool-${modelCall.callId}`,
-        modelCall.callId,
-      );
-      workingMessages = [...workingMessages, modelCall.response, toolMessage];
-      toolSteps += 1;
-    }
+    const finalCall = await this.streamFinalizer(input, workingMessages, onChunk);
+    this.messages = [...this.messages, new HumanMessage(input), finalCall.response];
+    return finalCall.response;
   }
-
   history() {
     return [...this.messages];
   }
