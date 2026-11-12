@@ -523,18 +523,18 @@ export class ChatHarness {
     let workingMessages = [...this.messages, new HumanMessage(input)];
     let toolSteps = 0;
 
-    const requiredMessages = await this.executeRequiredTool(input, workingMessages);
-    if (requiredMessages) {
-      workingMessages = requiredMessages;
-      toolSteps += 1;
+    const plan = await this.planTools(input, workingMessages);
+    if (plan && plan.steps.length > 0) {
+      if (plan.steps.length > MAX_TOOL_STEPS) {
+        throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
+      }
+      workingMessages = await this.executePlan(plan.steps, workingMessages);
+      toolSteps = plan.steps.length;
     } else {
-      const plan = await this.planTools(input, workingMessages);
-      if (plan && plan.steps.length > 0) {
-        if (plan.steps.length > MAX_TOOL_STEPS) {
-          throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
-        }
-        workingMessages = await this.executePlan(plan.steps, workingMessages);
-        toolSteps = plan.steps.length;
+      const requiredMessages = await this.executeRequiredTool(input, workingMessages);
+      if (requiredMessages) {
+        workingMessages = requiredMessages;
+        toolSteps += 1;
       }
     }
 
@@ -568,18 +568,18 @@ export class ChatHarness {
     let workingMessages = [...this.messages, new HumanMessage(input)];
     let toolSteps = 0;
 
-    const requiredMessages = await this.executeRequiredTool(input, workingMessages);
-    if (requiredMessages) {
-      workingMessages = requiredMessages;
-      toolSteps += 1;
+    const plan = await this.planTools(input, workingMessages);
+    if (plan && plan.steps.length > 0) {
+      if (plan.steps.length > MAX_TOOL_STEPS) {
+        throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
+      }
+      workingMessages = await this.executePlan(plan.steps, workingMessages);
+      toolSteps = plan.steps.length;
     } else {
-      const plan = await this.planTools(input, workingMessages);
-      if (plan && plan.steps.length > 0) {
-        if (plan.steps.length > MAX_TOOL_STEPS) {
-          throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
-        }
-        workingMessages = await this.executePlan(plan.steps, workingMessages);
-        toolSteps = plan.steps.length;
+      const requiredMessages = await this.executeRequiredTool(input, workingMessages);
+      if (requiredMessages) {
+        workingMessages = requiredMessages;
+        toolSteps += 1;
       }
     }
 
