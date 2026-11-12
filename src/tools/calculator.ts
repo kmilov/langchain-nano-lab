@@ -49,25 +49,26 @@ function parseCalculatorRoute(input: string): CalculatorInput | null {
     .replace(/[×x*]/g, " multiply ")
     .replace(/[÷/]/g, " divide ");
 
+  const number = "(-?\\d+(?:\\.\\d+)?)";
   const patterns: Array<{
     operation: CalculatorInput["operation"];
     regex: RegExp;
   }> = [
     {
       operation: "add",
-      regex: /(?:add|plus|sum of|what is)\s+(-?\d+(?:\.\d+)?)\s+(?:and|plus|\+)\s+(-?\d+(?:\.\d+)?)/i,
+      regex: new RegExp(`(?:add|sum(?: of)?|what is)\\s+${number}\\s+(?:and|plus|\\+)\\s+${number}`, "i"),
     },
     {
       operation: "subtract",
-      regex: /(?:subtract|minus|what is)\s+(-?\d+(?:\.\d+)?)\s+(?:minus|-)\s+(-?\d+(?:\.\d+)?)/i,
+      regex: new RegExp(`(?:subtract|what is)\\s+${number}\\s+(?:minus|-)\\s+${number}`, "i"),
     },
     {
       operation: "multiply",
-      regex: /(?:multiply|what is)\s+(-?\d+(?:\.\d+)?)\s+(?:by\s+)?(?:multiply\s+)?(-?\d+(?:\.\d+)?)/i,
+      regex: new RegExp(`(?:multiply\\s+)?${number}\\s+(?:times|multiply(?:ed)?(?: by)?)\\s+${number}`, "i"),
     },
     {
       operation: "divide",
-      regex: /(?:divide|what is)\s+(-?\d+(?:\.\d+)?)\s+(?:by\s+)?(?:divide\s+)?(-?\d+(?:\.\d+)?)/i,
+      regex: new RegExp(`(?:divide\\s+)?${number}\\s+(?:divided by|divide(?: by)?)\\s+${number}`, "i"),
     },
   ];
 
