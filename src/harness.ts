@@ -376,6 +376,11 @@ export class ChatHarness {
 
     if (value && typeof value === "object") {
       const objectValue = value as Record<string, unknown>;
+
+      if (this.isUserValue(objectValue)) {
+        return objectValue.$value;
+      }
+
       if (
         Object.keys(objectValue).length === 1 &&
         typeof objectValue.$step === "string"
@@ -398,6 +403,94 @@ export class ChatHarness {
     return value;
   }
 
+  private isStepReference(value: unknown): value is { $step: string } {
+    return Boolean(
+      value &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        Object.keys(value as Record<string, unknown>).length === 1 &&
+        typeof (value as Record<string, unknown>).$step === "string",
+    );
+  }
+
+  private isUserValue(value: unknown): value is { $value: unknown; $source: "user" } {
+    return Boolean(
+      value &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        (value as Record<string, unknown>).$source === "user" &&
+        "$value" in (value as Record<string, unknown>),
+    );
+  }
+
+  private valueAppearsInInput(input: string, value: unknown) {
+    if (typeof value !== "string" && typeof value !== "number") return false;
+    return input.toLowerCase().includes(String(value).toLowerCase());
+  }
+
+  private collectStepReferences(value: unknown, references = new Set<string>()) {
+    if (this.isStepReference(value)) {
+      references.add(value.$step);
+      return references;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) this.collectStepReferences(item, references);
+      return references;
+    }
+
+    if (value && typeof value === "object") {
+      for (const nested of Object.values(value as Record<string, unknown>)) {
+        this.collectStepReferences(nested, references);
+      }
+    }
+
+    return references;
+  }
+
+  private validatePlan(input: string, steps: PlannedToolStep[]) {
+    const completed = new Set<string>();
+
+    for (const step of steps) {
+      const registered = this.registeredTools.find(
+        (candidate) => candidate.tool.name === step.tool,
+      );
+      if (!registered) return { valid: false, reason: `Unknown tool: ${step.tool}` };
+
+      for (const dependency of step.dependsOn ?? []) {
+        if (!completed.has(dependency)) {
+          return { valid: false, reason: `Invalid dependency: ${dependency}` };
+        }
+      }
+
+      const references = this.collectStepReferences(step.args);
+      for (const reference of references) {
+        if (!completed.has(reference) || !(step.dependsOn ?? []).includes(reference)) {
+          return { valid: false, reason: `Ungrounded step reference: ${reference}` };
+        }
+      }
+
+      for (const argName of registered.capability?.groundedArgs ?? []) {
+        const value = step.args[argName];
+        if (this.isStepReference(value)) continue;
+
+        if (!this.isUserValue(value) || !this.valueAppearsInInput(input, value.$value)) {
+          return {
+            valid: false,
+            reason: `Argument "${argName}" for ${step.tool} is not grounded.`,
+          };
+        }
+      }
+
+      if (registered.capability?.accepts && !registered.capability.accepts(input, step.args)) {
+        return { valid: false, reason: `Tool ${step.tool} is outside its capability.` };
+      }
+
+      completed.add(step.id);
+    }
+
+    return { valid: true, reason: "" };
+  }
   private async planTools(input: string, workingMessages: BaseMessage[]) {
     if (this.tools.length === 0) return null;
 
