@@ -377,10 +377,6 @@ export class ChatHarness {
     if (value && typeof value === "object") {
       const objectValue = value as Record<string, unknown>;
 
-      if (this.isUserValue(objectValue)) {
-        return objectValue.$value;
-      }
-
       if (
         Object.keys(objectValue).length === 1 &&
         typeof objectValue.$step === "string"
@@ -413,19 +409,16 @@ export class ChatHarness {
     );
   }
 
-  private isUserValue(value: unknown): value is { $value: unknown; $source: "user" } {
-    return Boolean(
-      value &&
-        typeof value === "object" &&
-        !Array.isArray(value) &&
-        (value as Record<string, unknown>).$source === "user" &&
-        "$value" in (value as Record<string, unknown>),
-    );
-  }
-
   private valueAppearsInInput(input: string, value: unknown) {
-    if (typeof value !== "string" && typeof value !== "number") return false;
-    return input.toLowerCase().includes(String(value).toLowerCase());
+    if (typeof value === "number") {
+      return (input.match(/-?\\d+(?:\\.\\d+)?/g) ?? []).includes(String(value));
+    }
+
+    if (typeof value === "string") {
+      return input.toLowerCase().includes(value.toLowerCase());
+    }
+
+    return false;
   }
 
   private collectStepReferences(value: unknown, references = new Set<string>()) {
@@ -474,10 +467,10 @@ export class ChatHarness {
         const value = step.args[argName];
         if (this.isStepReference(value)) continue;
 
-        if (!this.isUserValue(value) || !this.valueAppearsInInput(input, value.$value)) {
+        if (!this.valueAppearsInInput(input, value)) {
           return {
             valid: false,
-            reason: `Argument "${argName}" for ${step.tool} is not grounded.`,
+            reason: `Argument "${argName}" for ${step.tool} is not grounded in the user request or an earlier step.`,
           };
         }
       }
