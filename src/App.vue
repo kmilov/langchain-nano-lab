@@ -32,6 +32,9 @@ type TestCase = {
   id: number;
   prompt: string;
   expected: string;
+  expectedExecutionStatus: "" | "SUCCESS" | "EMPTY" | "PLAN_INVALID" | "PLAN_REJECTED";
+  requiredTools: string;
+  forbiddenTools: string;
   status: TestStatus;
   actual: string;
   detail: string;
@@ -71,6 +74,9 @@ const testCases = ref<TestCase[]>([
     id: 1,
     prompt: "What is 14 + 6, and what is 30 - 11?",
     expected: "20",
+    expectedExecutionStatus: "SUCCESS",
+    requiredTools: "calculator",
+    forbiddenTools: "",
     status: "idle",
     actual: "",
     detail: "Expected answer must contain this text.",
@@ -79,6 +85,9 @@ const testCases = ref<TestCase[]>([
     id: 2,
     prompt: 'Count the words in "the quick brown fox jumps over the lazy dog".',
     expected: "9",
+    expectedExecutionStatus: "SUCCESS",
+    requiredTools: "word_count",
+    forbiddenTools: "",
     status: "idle",
     actual: "",
     detail: "Expected answer must contain this text.",
@@ -86,10 +95,13 @@ const testCases = ref<TestCase[]>([
   {
     id: 3,
     prompt: "How many letters are in the word banana?",
-    expected: "execution could not proceed",
+    expected: "six",
+    expectedExecutionStatus: "EMPTY",
+    requiredTools: "",
+    forbiddenTools: "word_count",
     status: "idle",
     actual: "",
-    detail: "This probes an unsupported capability boundary.",
+    detail: "Correct answer, while avoiding the word_count tool.",
   },
 ]);
 
@@ -354,21 +366,96 @@ function normalizeEvalText(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function evaluateTest(actual: string, expected: string) {
-  const normalizedActual = normalizeEvalText(actual);
-  const normalizedExpected = normalizeEvalText(expected);
+function parseToolList(value: string) {
+  return value
+    .split(",")
+    .map((tool) => tool.trim())
+    .filter(Boolean);
+}
 
-  if (!normalizedExpected) {
-    return { pass: false, detail: "Expected output is empty." };
+function executionStatusFromEvents(events: HarnessEvent[]) {
+  const finalizerStart = [...events]
+    .reverse()
+    .find(
+      (event): event is Extract<HarnessEvent, { type: "llm_start" }> =>
+        event.type === "llm_start" && event.kind === "finalizer",
+    );
+
+  const report = finalizerStart?.messages.find(
+    (message) =>
+      message.role === "system" &&
+      message.content.startsWith("Execution status:"),
+  );
+
+  return report?.content.match(/Execution status:\s*(\S+)/)?.[1] ?? "";
+}
+
+function evaluateTest(test: TestCase, events: HarnessEvent[]) {
+  const assertions: Array<{ pass: boolean; detail: string }> = [];
+  const expectedText = test.expected.trim();
+
+  if (expectedText) {
+    const pass = normalizeEvalText(test.actual).includes(
+      normalizeEvalText(expectedText),
+    );
+    assertions.push({
+      pass,
+      detail: pass
+        ? `Answer contains "${expectedText}".`
+        : `Answer does not contain "${expectedText}".`,
+    });
   }
 
-  if (normalizedActual.includes(normalizedExpected)) {
-    return { pass: true, detail: `Found expected text: "${expected}"` };
+  const actualExecutionStatus = executionStatusFromEvents(events);
+  if (test.expectedExecutionStatus) {
+    const pass = actualExecutionStatus === test.expectedExecutionStatus;
+    assertions.push({
+      pass,
+      detail: pass
+        ? `Execution status is ${actualExecutionStatus}.`
+        : `Expected execution status ${test.expectedExecutionStatus}, got ${actualExecutionStatus || "unknown"}.`,
+    });
+  }
+
+  const calledTools = events
+    .filter(
+      (event): event is Extract<HarnessEvent, { type: "tool_start" }> =>
+        event.type === "tool_start",
+    )
+    .map((event) => event.tool);
+
+  for (const tool of parseToolList(test.requiredTools)) {
+    const pass = calledTools.includes(tool);
+    assertions.push({
+      pass,
+      detail: pass
+        ? `Required tool "${tool}" was called.`
+        : `Required tool "${tool}" was not called.`,
+    });
+  }
+
+  for (const tool of parseToolList(test.forbiddenTools)) {
+    const pass = !calledTools.includes(tool);
+    assertions.push({
+      pass,
+      detail: pass
+        ? `Forbidden tool "${tool}" was not called.`
+        : `Forbidden tool "${tool}" was called.`,
+    });
+  }
+
+  if (assertions.length === 0) {
+    return {
+      pass: false,
+      detail: "Add at least one assertion before running this eval.",
+    };
   }
 
   return {
-    pass: false,
-    detail: `Expected output to contain "${expected}", but it did not.`,
+    pass: assertions.every((assertion) => assertion.pass),
+    detail: assertions
+      .map((assertion) => `${assertion.pass ? "✓" : "✗"} ${assertion.detail}`)
+      .join("\n"),
   };
 }
 
@@ -376,7 +463,7 @@ function resetTests() {
   for (const test of testCases.value) {
     test.status = "idle";
     test.actual = "";
-    test.detail = "Expected answer must contain this text.";
+    test.detail = "Not run yet.";
   }
 }
 
@@ -386,9 +473,12 @@ function addTestCase() {
     id: nextId,
     prompt: "",
     expected: "",
+    expectedExecutionStatus: "",
+    requiredTools: "",
+    forbiddenTools: "",
     status: "idle",
     actual: "",
-    detail: "Expected answer must contain this text.",
+    detail: "Not run yet.",
   });
 }
 
@@ -410,17 +500,20 @@ async function runTestSuite() {
 
   for (const test of testCases.value) {
     const prompt = test.prompt.trim();
-    const expected = test.expected.trim();
 
-    if (!prompt || !expected) {
+    if (!prompt) {
       test.status = "error";
-      test.detail = "Prompt and expected output are required.";
+      test.detail = "Prompt is required.";
       continue;
     }
 
     const evalHarness = new ChatHarness(model, [calculatorTool, wordCountTool]);
+    const evalEvents: HarnessEvent[] = [];
     evalHarness.subscribe((event) => {
-      if (event.type !== "llm_chunk") debugEvents.value.push(event);
+      if (event.type !== "llm_chunk") {
+        evalEvents.push(event);
+        debugEvents.value.push(event);
+      }
     });
 
     test.status = "running";
@@ -442,7 +535,7 @@ async function runTestSuite() {
       test.actual = response.content.toString().trimEnd();
       messages.value[assistantIndex].content = test.actual;
 
-      const evaluation = evaluateTest(test.actual, expected);
+      const evaluation = evaluateTest(test, evalEvents);
       test.status = evaluation.pass ? "pass" : "fail";
       test.detail = evaluation.detail;
     } catch (error) {
@@ -458,7 +551,6 @@ async function runTestSuite() {
 
   testRunning.value = false;
 }
-
 
 function onComposerKeydown(event: KeyboardEvent) {
   if (event.key === "Enter" && !event.shiftKey) {
@@ -741,15 +833,38 @@ onMounted(async () => {
                 <textarea v-model="test.prompt" rows="3" :disabled="testRunning" />
               </label>
 
-              <label class="testField">
-                <span>Expected answer contains</span>
-                <input v-model="test.expected" :disabled="testRunning" />
-              </label>
+              <div class="testAssertionGrid">
+                <label class="testField">
+                  <span>Answer contains</span>
+                  <input v-model="test.expected" :disabled="testRunning" placeholder="Optional text assertion" />
+                </label>
+
+                <label class="testField">
+                  <span>Execution status</span>
+                  <select v-model="test.expectedExecutionStatus" :disabled="testRunning">
+                    <option value="">Any</option>
+                    <option value="SUCCESS">SUCCESS</option>
+                    <option value="EMPTY">EMPTY</option>
+                    <option value="PLAN_INVALID">PLAN_INVALID</option>
+                    <option value="PLAN_REJECTED">PLAN_REJECTED</option>
+                  </select>
+                </label>
+
+                <label class="testField">
+                  <span>Required tools</span>
+                  <input v-model="test.requiredTools" :disabled="testRunning" placeholder="calculator, word_count" />
+                </label>
+
+                <label class="testField">
+                  <span>Forbidden tools</span>
+                  <input v-model="test.forbiddenTools" :disabled="testRunning" placeholder="word_count" />
+                </label>
+              </div>
 
               <div v-if="test.status !== 'idle'" class="testResult">
                 <span>Actual output</span>
                 <pre>{{ test.actual || "Waiting…" }}</pre>
-                <p>{{ test.detail }}</p>
+                <p class="testDetails">{{ test.detail }}</p>
               </div>
             </section>
           </div>

@@ -469,7 +469,8 @@ pre {
   letter-spacing: .07em;
 }
 .testField textarea,
-.testField input {
+.testField input,
+.testField select {
   width: 100%;
   border: 1px solid #d9dfe8;
   border-radius: 9px;
@@ -482,7 +483,8 @@ pre {
 }
 .testField textarea { resize: vertical; min-height: 68px; }
 .testField textarea:focus,
-.testField input:focus {
+.testField input:focus,
+.testField select:focus {
   border-color: #9dbbf6;
   box-shadow: 0 0 0 3px rgba(62, 117, 220, .08);
 }
@@ -508,4 +510,22 @@ pre {
 @media (max-width: 620px) {
   .testSummary { grid-template-columns: 1fr; }
   .testActions { width: 100%; justify-content: flex-end; }
+}
+
+
+.testAssertionGrid {
+  padding: 0 12px 10px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 8px;
+}
+.testAssertionGrid .testField {
+  padding-left: 0;
+  padding-right: 0;
+}
+.testDetails {
+  white-space: pre-line;
+}
+@media (max-width: 620px) {
+  .testAssertionGrid { grid-template-columns: 1fr; }
 }
