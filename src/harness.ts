@@ -40,6 +40,17 @@ const SUMMARY_SYSTEM_PROMPT = [
   "Be concise. Do not invent information.",
 ].join("\n");
 
+const FINALIZER_SYSTEM_PROMPT = [
+  "You are the finalizer. Produce only the final natural-language answer.",
+  "Do not request tools and do not output tool-call JSON.",
+  "Treat successful tool results in the current turn as authoritative.",
+  "Never claim a tool succeeded if it returned an error or was not executed.",
+  "Never invent tool results.",
+  "Never claim access to external information, the web, search, databases, APIs, or live data unless a successful tool result in this turn actually provided it.",
+  "If the available tools cannot retrieve required information, say so plainly.",
+  "You may use built-in model knowledge when useful, but do not present it as externally verified or current.",
+].join("\n");
+
 export type MessageSnapshot = {
   role: string;
   content: string;
@@ -59,7 +70,7 @@ export type ChatHarnessState = {
   summarizedMessageCount: number;
 };
 
-export type ModelCallKind = "agent" | "summary" | "planner";
+export type ModelCallKind = "agent" | "summary" | "planner" | "finalizer";
 
 export type HarnessEvent =
   | {
