@@ -513,6 +513,7 @@ export class ChatHarness {
   ) {
     let messages = [...workingMessages];
     const results = new Map<string, string>();
+    const executionResults: string[] = [];
 
     for (const step of steps) {
       const args = this.resolvePlanValue(step.args, results) as Record<string, unknown>;
@@ -528,14 +529,16 @@ export class ChatHarness {
         result?: unknown;
         error?: unknown;
       };
-      results.set(
-        step.id,
+      const stepResult =
         parsed.result !== undefined
           ? String(parsed.result)
           : parsed.error !== undefined
             ? String(parsed.error)
-            : toolMessage.content.toString(),
-      );
+            : toolMessage.content.toString();
+      results.set(step.id, stepResult);
+      if (parsed.result !== undefined) {
+        executionResults.push(`${step.id} ${step.tool} -> ${stepResult}`);
+      }
 
       messages = [
         ...messages,
@@ -550,7 +553,7 @@ export class ChatHarness {
       ];
     }
 
-    return messages;
+    return { messages, executionResults };
   }
 
   private executionReportMessage(report: {\n    status: "SUCCESS" | "EMPTY" | "PLAN_INVALID" | "PLAN_REJECTED";\n    reason?: string;\n    results?: string[];\n  }) {\n    const lines = [`Execution status: ${report.status}`];\n    if (report.reason) lines.push(`Reason: ${report.reason}`);\n    if (report.results?.length) {\n      lines.push("Successful tool results:");\n      for (const result of report.results) lines.push(`- ${result}`);\n    } else {\n      lines.push("Successful tool results: none");\n    }\n    return new SystemMessage(lines.join("\\n"));\n  }\n\n  private finalizerMessages(input: string, workingMessages: BaseMessage[], report: SystemMessage) {
@@ -734,23 +737,39 @@ export class ChatHarness {
     await this.compactContextIfNeeded();
 
     let workingMessages = [...this.messages, new HumanMessage(input)];
-    const plan = await this.planTools(input, workingMessages);
+    const planning = await this.planTools(input, workingMessages);
+    let report = this.executionReportMessage({ status: "EMPTY" });
 
-    if (plan && plan.steps.length > 0) {
-      if (plan.steps.length > MAX_TOOL_STEPS) {
-        throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
+    if (planning?.status === "valid") {
+      if (planning.plan.steps.length > MAX_TOOL_STEPS) {
+        report = this.executionReportMessage({
+          status: "PLAN_REJECTED",
+          reason: `Tool step limit reached (${MAX_TOOL_STEPS}).`,
+        });
+      } else {
+        const validation = this.validatePlan(input, planning.plan.steps);
+        if (validation.valid) {
+          const execution = await this.executePlan(input, planning.plan.steps, workingMessages);
+          workingMessages = execution.messages;
+          report = this.executionReportMessage({
+            status: "SUCCESS",
+            results: execution.executionResults,
+          });
+        } else {
+          report = this.executionReportMessage({
+            status: "PLAN_REJECTED",
+            reason: validation.reason,
+          });
+        }
       }
-
-      const validation = this.validatePlan(input, plan.steps);
-      if (validation.valid) {
-        workingMessages = await this.executePlan(input, plan.steps, workingMessages);
-      }
-    } else {
-      const requiredMessages = await this.executeRequiredTool(input, workingMessages);
-      if (requiredMessages) workingMessages = requiredMessages;
+    } else if (planning?.status === "invalid") {
+      report = this.executionReportMessage({
+        status: "PLAN_INVALID",
+        reason: planning.reason,
+      });
     }
 
-    const finalCall = await this.finalize(input, workingMessages);
+    const finalCall = await this.finalize(input, workingMessages, report);
     this.messages = [...this.messages, new HumanMessage(input), finalCall.response];
     return finalCall.response;
   }
@@ -759,23 +778,39 @@ export class ChatHarness {
     await this.compactContextIfNeeded();
 
     let workingMessages = [...this.messages, new HumanMessage(input)];
-    const plan = await this.planTools(input, workingMessages);
+    const planning = await this.planTools(input, workingMessages);
+    let report = this.executionReportMessage({ status: "EMPTY" });
 
-    if (plan && plan.steps.length > 0) {
-      if (plan.steps.length > MAX_TOOL_STEPS) {
-        throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
+    if (planning?.status === "valid") {
+      if (planning.plan.steps.length > MAX_TOOL_STEPS) {
+        report = this.executionReportMessage({
+          status: "PLAN_REJECTED",
+          reason: `Tool step limit reached (${MAX_TOOL_STEPS}).`,
+        });
+      } else {
+        const validation = this.validatePlan(input, planning.plan.steps);
+        if (validation.valid) {
+          const execution = await this.executePlan(input, planning.plan.steps, workingMessages);
+          workingMessages = execution.messages;
+          report = this.executionReportMessage({
+            status: "SUCCESS",
+            results: execution.executionResults,
+          });
+        } else {
+          report = this.executionReportMessage({
+            status: "PLAN_REJECTED",
+            reason: validation.reason,
+          });
+        }
       }
-
-      const validation = this.validatePlan(input, plan.steps);
-      if (validation.valid) {
-        workingMessages = await this.executePlan(input, plan.steps, workingMessages);
-      }
-    } else {
-      const requiredMessages = await this.executeRequiredTool(input, workingMessages);
-      if (requiredMessages) workingMessages = requiredMessages;
+    } else if (planning?.status === "invalid") {
+      report = this.executionReportMessage({
+        status: "PLAN_INVALID",
+        reason: planning.reason,
+      });
     }
 
-    const finalCall = await this.streamFinalizer(input, workingMessages, onChunk);
+    const finalCall = await this.streamFinalizer(input, workingMessages, report, onChunk);
     this.messages = [...this.messages, new HumanMessage(input), finalCall.response];
     return finalCall.response;
   }
