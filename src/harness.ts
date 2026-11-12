@@ -342,6 +342,7 @@ export class ChatHarness {
 
     const callId = this.nextCallId++;
     const toolMessage = await this.executeTool(
+      input,
       toolCall,
       `tool-${callId}`,
       callId,
@@ -390,7 +391,7 @@ export class ChatHarness {
     if (this.tools.length === 0) return null;
 
     const plannerMessages: BaseMessage[] = [
-      new SystemMessage(plannerInstructions(this.tools)),
+      new SystemMessage(plannerInstructions(this.registeredTools)),
       ...this.messagesForModel(workingMessages).filter(
         (message) => message.getType() !== "system",
       ),
@@ -401,6 +402,7 @@ export class ChatHarness {
   }
 
   private async executePlan(
+    input: string,
     steps: PlannedToolStep[],
     workingMessages: BaseMessage[],
   ) {
@@ -411,6 +413,7 @@ export class ChatHarness {
       const args = this.resolvePlanValue(step.args, results) as Record<string, unknown>;
       const callId = this.nextCallId++;
       const toolMessage = await this.executeTool(
+        input,
         { type: "tool_call", tool: step.tool, args },
         `tool-${callId}`,
         callId,
@@ -446,11 +449,15 @@ export class ChatHarness {
   }
 
   private async executeTool(
+    input: string,
     toolCall: ToolCallRequest,
     toolCallId: string,
     callId: number,
   ) {
-    const tool = this.tools.find((candidate) => candidate.name === toolCall.tool);
+    const registered = this.registeredTools.find(
+      (candidate) => candidate.tool.name === toolCall.tool,
+    );
+    const tool = registered?.tool;
 
     this.emit({
       type: "tool_start",
@@ -481,6 +488,32 @@ export class ChatHarness {
 
       return new ToolMessage({
         content,
+        tool_call_id: toolCallId,
+        name: toolCall.tool,
+      });
+    }
+
+    if (
+      registered.capability?.accepts &&
+      !registered.capability.accepts(input, toolCall.args)
+    ) {
+      const resultContent = `Tool "${toolCall.tool}" is outside its declared capability for this request. Do not use it as a substitute for an unsupported operation.`;
+
+      this.emit({
+        type: "tool_end",
+        callId,
+        toolCallId,
+        tool: toolCall.tool,
+        result: resultContent,
+        timestamp: Date.now(),
+      });
+
+      return new ToolMessage({
+        content: JSON.stringify({
+          tool: toolCall.tool,
+          args: toolCall.args,
+          error: resultContent,
+        }),
         tool_call_id: toolCallId,
         name: toolCall.tool,
       });
@@ -528,7 +561,7 @@ export class ChatHarness {
       if (plan.steps.length > MAX_TOOL_STEPS) {
         throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
       }
-      workingMessages = await this.executePlan(plan.steps, workingMessages);
+      workingMessages = await this.executePlan(input, plan.steps, workingMessages);
       toolSteps = plan.steps.length;
     } else {
       const requiredMessages = await this.executeRequiredTool(input, workingMessages);
@@ -553,6 +586,7 @@ export class ChatHarness {
       }
 
       const toolMessage = await this.executeTool(
+        input,
         toolCall,
         `tool-${modelCall.callId}`,
         modelCall.callId,
@@ -573,7 +607,7 @@ export class ChatHarness {
       if (plan.steps.length > MAX_TOOL_STEPS) {
         throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
       }
-      workingMessages = await this.executePlan(plan.steps, workingMessages);
+      workingMessages = await this.executePlan(input, plan.steps, workingMessages);
       toolSteps = plan.steps.length;
     } else {
       const requiredMessages = await this.executeRequiredTool(input, workingMessages);
@@ -602,6 +636,7 @@ export class ChatHarness {
       }
 
       const toolMessage = await this.executeTool(
+        input,
         toolCall,
         `tool-${modelCall.callId}`,
         modelCall.callId,
