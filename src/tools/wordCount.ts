@@ -1,10 +1,11 @@
 import { tool } from "@langchain/core/tools";
+import { registerAgentTool } from "./routing";
 
 export type WordCountInput = {
   text: string;
 };
 
-export const wordCountTool = tool(
+const rawWordCountTool = tool(
   async ({ text }: WordCountInput) => {
     const trimmed = text.trim();
     if (!trimmed) return "0";
@@ -24,3 +25,16 @@ export const wordCountTool = tool(
     },
   },
 );
+
+
+export const wordCountTool = registerAgentTool(rawWordCountTool, {
+  mode: "required",
+  route(input) {
+    if (!/\b(count|how many)\b.*\bwords?\b|\bwords?\b.*\b(count|how many)\b/i.test(input)) {
+      return null;
+    }
+
+    const quoted = input.match(/["“](.+?)["”]/);
+    return { text: quoted?.[1] ?? input };
+  },
+});
