@@ -4,6 +4,7 @@ export type PlannedToolStep = {
   id: string;
   tool: string;
   args: Record<string, unknown>;
+  dependsOn?: string[];
 };
 
 export type ToolPlan = {
@@ -25,7 +26,7 @@ export function plannerInstructions(tools: StructuredToolInterface[]): string {
     "Return ONLY valid JSON. Do not use Markdown.",
     'If no tool is needed, return: {"type":"plan","steps":[]}',
     "If tools are needed, return a plan with one step per tool invocation.",
-    'Shape: {"type":"plan","steps":[{"id":"step-1","tool":"<tool>","args":{...}}]}',
+    'Shape: {"type":"plan","steps":[{"id":"step-1","tool":"<tool>","args":{...},"dependsOn":["step-0"]}]}',
     "Steps execute in array order.",
     'To use an earlier step result as an argument, use exactly {"$step":"step-id"} as that argument value.',
     "Never calculate, count, search, or otherwise perform tool work inside the plan.",
@@ -64,10 +65,23 @@ function parsePlanJson(text: string): ToolPlan | null {
       }
 
       ids.add(step.id);
+      const dependsOn =
+        step.dependsOn === undefined
+          ? undefined
+          : Array.isArray(step.dependsOn) &&
+              step.dependsOn.every(
+                (dependency) => typeof dependency === "string" && dependency,
+              )
+            ? (step.dependsOn as string[])
+            : null;
+
+      if (dependsOn === null) return null;
+
       steps.push({
         id: step.id,
         tool: step.tool,
         args: step.args as Record<string, unknown>,
+        ...(dependsOn ? { dependsOn } : {}),
       });
     }
 
