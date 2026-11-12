@@ -134,6 +134,19 @@ const adapterCode = `async *_streamResponseChunks(messages) {
   }
 }`;
 
+const routingCode = `for (const registered of registeredTools) {
+  if (registered.routing?.mode !== "required") continue;
+
+  const args = registered.routing.route(input);
+  if (args) {
+    await executeTool({
+      type: "tool_call",
+      tool: registered.tool.name,
+      args,
+    });
+  }
+}`;
+
 const persistenceCode = `const saved = localStorage.getItem(STORAGE_KEY);
 if (saved) {
   const state = JSON.parse(saved);
@@ -319,7 +332,7 @@ onMounted(async () => {
           </div>
           <div class="headerBadges">
             <span class="contextUsageLabel">{{ contextUsageLabel }}</span>
-            <span class="step">v6 · persistent memory · {{ historySize }} msgs</span>
+            <span class="step">v7 · tool routing · {{ historySize }} msgs</span>
             <button v-if="messages.length > 0" class="clearButton" @click="clearConversation">Clear chat</button>
           </div>
         </div>
@@ -372,7 +385,7 @@ onMounted(async () => {
           <div class="sectionHeader codeHeading">
             <div>
               <h2>Code</h2>
-              <p>v6 separates agent state from the browser storage mechanism.</p>
+              <p>v7 adds generic required-tool routing while keeping tool-specific matching outside the Harness.</p>
             </div>
           </div>
 
@@ -382,13 +395,18 @@ onMounted(async () => {
           </section>
 
           <section class="codeBlock">
-            <div class="codeBar">2 · Persistence · export / restore Harness state</div>
+            <div class="codeBar">2 · Tool routing · required policies before Nano</div>
+            <pre><code>{{ routingCode }}</code></pre>
+          </section>
+
+          <section class="codeBlock">
+            <div class="codeBar">3 · Persistence · export / restore Harness state</div>
             <pre><code>{{ persistenceCode }}</code></pre>
           </section>
 
           <div class="nextSteps">
-            <span>Persistence policy</span>
-            <strong>localStorage · save after completed turns · restore on page load</strong>
+            <span>v7 routing policy</span>
+            <strong>required tools are enforced by the Harness · ambiguous tools still stay model-driven</strong>
           </div>
         </template>
 
