@@ -1,4 +1,4 @@
-import type { StructuredToolInterface } from "@langchain/core/tools";
+import type { RegisteredAgentTool } from "./tools/routing";
 
 export type PlannedToolStep = {
   id: string;
@@ -12,17 +12,33 @@ export type ToolPlan = {
   steps: PlannedToolStep[];
 };
 
-export function plannerInstructions(tools: StructuredToolInterface[]): string {
+export function plannerInstructions(tools: RegisteredAgentTool[]): string {
   const descriptions = tools
-    .map(
-      (tool) =>
-        `Tool: ${tool.name}\nDescription: ${tool.description}\nArguments: ${JSON.stringify(tool.schema)}`,
-    )
+    .map(({ tool, capability }) => {
+      const lines = [
+        `Tool: ${tool.name}`,
+        `Description: ${tool.description}`,
+        `Arguments: ${JSON.stringify(tool.schema)}`,
+      ];
+
+      if (capability?.useFor?.length) {
+        lines.push(`Use for: ${capability.useFor.join(" | ")}`);
+      }
+
+      if (capability?.notFor?.length) {
+        lines.push(`Do NOT use for: ${capability.notFor.join(" | ")}`);
+      }
+
+      return lines.join("\n");
+    })
     .join("\n\n");
 
   return [
     "You are a planning component. Do not solve the user's task yourself.",
     "Decide whether the request needs one or more of the available tools.",
+    "Before selecting any tool, identify the actual operation required by that subtask and verify that the tool capability explicitly supports it.",
+    "Do not select a tool merely because words in the request resemble the tool name or description.",
+    "If no available tool supports a required operation, do not invent a substitute tool step.",
     "Return ONLY valid JSON. Do not use Markdown.",
     'If no tool is needed, return: {"type":"plan","steps":[]}',
     "If tools are needed, return a plan with one step per tool invocation.",
