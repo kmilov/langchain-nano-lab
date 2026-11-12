@@ -28,6 +28,7 @@ import {
   parseToolPlan,
   plannerInstructions,
   type PlannedToolStep,
+  type PlanningResult,
 } from "./planning";
 
 export const MAX_TOOL_STEPS = 5;
@@ -49,6 +50,9 @@ const FINALIZER_SYSTEM_PROMPT = [
   "Never claim access to external information, the web, search, databases, APIs, or live data unless a successful tool result in this turn actually provided it.",
   "If the available tools cannot retrieve required information, say so plainly.",
   "You may use built-in model knowledge when useful, but do not present it as externally verified or current.",
+  "An execution report will be provided for the current turn.",
+  "If the execution report says PLAN_INVALID or PLAN_REJECTED, do not complete any tool-required subtask yourself. State that execution could not proceed.",
+  "If the execution report says SUCCESS, answer from the successful tool results and any unsupported non-tool parts only.",
 ].join("\n");
 
 export type MessageSnapshot = {
@@ -450,15 +454,9 @@ export class ChatHarness {
       );
       if (!registered) return { valid: false, reason: `Unknown tool: ${step.tool}` };
 
-      for (const dependency of step.dependsOn ?? []) {
-        if (!completed.has(dependency)) {
-          return { valid: false, reason: `Invalid dependency: ${dependency}` };
-        }
-      }
-
       const references = this.collectStepReferences(step.args);
       for (const reference of references) {
-        if (!completed.has(reference) || !(step.dependsOn ?? []).includes(reference)) {
+        if (!completed.has(reference)) {
           return { valid: false, reason: `Ungrounded step reference: ${reference}` };
         }
       }
@@ -484,7 +482,7 @@ export class ChatHarness {
 
     return { valid: true, reason: "" };
   }
-  private async planTools(input: string, workingMessages: BaseMessage[]) {
+  private async planTools(input: string, workingMessages: BaseMessage[]): Promise<PlanningResult | null> {
     if (this.tools.length === 0) return null;
 
     const priorVisible = this.messages
@@ -555,7 +553,7 @@ export class ChatHarness {
     return messages;
   }
 
-  private finalizerMessages(input: string, workingMessages: BaseMessage[]) {
+  private executionReportMessage(report: {\n    status: "SUCCESS" | "EMPTY" | "PLAN_INVALID" | "PLAN_REJECTED";\n    reason?: string;\n    results?: string[];\n  }) {\n    const lines = [`Execution status: ${report.status}`];\n    if (report.reason) lines.push(`Reason: ${report.reason}`);\n    if (report.results?.length) {\n      lines.push("Successful tool results:");\n      for (const result of report.results) lines.push(`- ${result}`);\n    } else {\n      lines.push("Successful tool results: none");\n    }\n    return new SystemMessage(lines.join("\\n"));\n  }\n\n  private finalizerMessages(input: string, workingMessages: BaseMessage[], report: SystemMessage) {
     const priorVisible = this.messages
       .slice(this.summarizedMessageCount)
       .filter(
@@ -572,21 +570,23 @@ export class ChatHarness {
         : []),
       ...priorVisible,
       ...currentTurn,
+      report,
     ];
   }
 
-  private async finalize(input: string, workingMessages: BaseMessage[]) {
-    return this.invokeModel(this.finalizerMessages(input, workingMessages), "finalizer");
+  private async finalize(input: string, workingMessages: BaseMessage[], report: SystemMessage) {
+    return this.invokeModel(this.finalizerMessages(input, workingMessages, report), "finalizer");
   }
 
   private async streamFinalizer(
     input: string,
     workingMessages: BaseMessage[],
+    report: SystemMessage,
     onChunk: (chunk: string) => void,
   ) {
     const callId = this.nextCallId++;
     const kind: ModelCallKind = "finalizer";
-    const messages = this.finalizerMessages(input, workingMessages);
+    const messages = this.finalizerMessages(input, workingMessages, report);
 
     this.emit({
       type: "llm_start",
