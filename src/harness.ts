@@ -556,7 +556,23 @@ export class ChatHarness {
     return { messages, executionResults };
   }
 
-  private executionReportMessage(report: {\n    status: "SUCCESS" | "EMPTY" | "PLAN_INVALID" | "PLAN_REJECTED";\n    reason?: string;\n    results?: string[];\n  }) {\n    const lines = [`Execution status: ${report.status}`];\n    if (report.reason) lines.push(`Reason: ${report.reason}`);\n    if (report.results?.length) {\n      lines.push("Successful tool results:");\n      for (const result of report.results) lines.push(`- ${result}`);\n    } else {\n      lines.push("Successful tool results: none");\n    }\n    return new SystemMessage(lines.join("\\n"));\n  }\n\n  private finalizerMessages(input: string, workingMessages: BaseMessage[], report: SystemMessage) {
+  private executionReportMessage(report: {
+    status: "SUCCESS" | "EMPTY" | "PLAN_INVALID" | "PLAN_REJECTED";
+    reason?: string;
+    results?: string[];
+  }) {
+    const lines = [`Execution status: ${report.status}`];
+    if (report.reason) lines.push(`Reason: ${report.reason}`);
+    if (report.results?.length) {
+      lines.push("Successful tool results:");
+      for (const result of report.results) lines.push(`- ${result}`);
+    } else {
+      lines.push("Successful tool results: none");
+    }
+    return new SystemMessage(lines.join("\n"));
+  }
+
+  private finalizerMessages(input: string, workingMessages: BaseMessage[], report: SystemMessage) {
     const priorVisible = this.messages
       .slice(this.summarizedMessageCount)
       .filter(
