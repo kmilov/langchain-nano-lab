@@ -26,7 +26,7 @@ type PersistedAppState = {
   harness: ChatHarnessState;
   messages: ChatMessage[];
 };
-type SideTab = "code" | "debug" | "test";
+type SideTab = "debug" | "test";
 type TestStatus = "idle" | "running" | "pass" | "fail" | "error";
 type TestCase = {
   id: number;
@@ -63,7 +63,7 @@ const memorySummary = ref("");
 const summarizedMessageCount = ref(0);
 const recentMessageCount = ref(0);
 const messagesEl = ref<HTMLElement | null>(null);
-const activeTab = ref<SideTab>("code");
+const activeTab = ref<SideTab>("debug");
 const debugEvents = ref<HarnessEvent[]>([]);
 const modelParamsStatus = ref<ModelParamsStatus>("loading");
 const modelParams = ref<Record<string, unknown> | null>(null);
@@ -175,62 +175,6 @@ const compactionEvents = computed(() =>
       event.type === "context_compacted",
   ),
 );
-
-const adapterCode = `async *_streamResponseChunks(messages) {
-  const session = await this.createSession(messages);
-
-  try {
-    const stream = session.promptStreaming(
-      this.toChromeMessages(messages),
-    );
-
-    for await (const chunk of stream) {
-      yield new ChatGenerationChunk({
-        text: chunk,
-        message: new AIMessageChunk({ content: chunk }),
-      });
-    }
-  } finally {
-    session.destroy();
-  }
-}`;
-
-const routingCode = `for (const registered of registeredTools) {
-  if (registered.routing?.mode !== "required") continue;
-
-  const args = registered.routing.route(input);
-  if (args) {
-    await executeTool({
-      type: "tool_call",
-      tool: registered.tool.name,
-      args,
-    });
-  }
-}`;
-
-const plannerCode = `const plan = await planTools(input, workingMessages);
-
-if (plan?.steps.length) {
-  workingMessages = await executePlan(plan.steps, workingMessages);
-} else {
-  // v7 safety net
-  workingMessages =
-    await executeRequiredTool(input, workingMessages)
-    ?? workingMessages;
-}`;
-
-const persistenceCode = `const saved = localStorage.getItem(STORAGE_KEY);
-if (saved) {
-  const state = JSON.parse(saved);
-  harness.importState(state.harness);
-  messages.value = state.messages;
-}
-
-localStorage.setItem(STORAGE_KEY, JSON.stringify({
-  version: 1,
-  harness: harness.exportState(),
-  messages: messages.value,
-}));`;
 
 function eventTime(event: HarnessEvent) {
   return new Date(event.timestamp).toLocaleTimeString();
@@ -639,46 +583,11 @@ onMounted(async () => {
 
       <aside class="codePane">
         <div class="sideTabs">
-          <button :class="{ active: activeTab === 'code' }" @click="activeTab = 'code'">Code</button>
           <button :class="{ active: activeTab === 'debug' }" @click="activeTab = 'debug'">Debug</button>
           <button :class="{ active: activeTab === 'test' }" @click="activeTab = 'test'">Test</button>
         </div>
 
-        <template v-if="activeTab === 'code'">
-          <div class="sectionHeader codeHeading">
-            <div>
-              <h2>Code</h2>
-              <p>v8 adds a Planner → Executor → Finalizer flow for multi-step and dependent tool use.</p>
-            </div>
-          </div>
-
-          <section class="codeBlock">
-            <div class="codeBar">1 · Adapter · LangChain-native streaming</div>
-            <pre><code>{{ adapterCode }}</code></pre>
-          </section>
-
-          <section class="codeBlock">
-            <div class="codeBar">2 · Tool routing · v7 deterministic fallback</div>
-            <pre><code>{{ routingCode }}</code></pre>
-          </section>
-
-          <section class="codeBlock">
-            <div class="codeBar">3 · Planner · whole-turn decomposition</div>
-            <pre><code>{{ plannerCode }}</code></pre>
-          </section>
-
-          <section class="codeBlock">
-            <div class="codeBar">4 · Persistence · export / restore Harness state</div>
-            <pre><code>{{ persistenceCode }}</code></pre>
-          </section>
-
-          <div class="nextSteps">
-            <span>v8 execution model</span>
-            <strong>planner understands the whole turn · executor runs ordered tool steps · Nano finalizes the answer</strong>
-          </div>
-        </template>
-
-        <template v-else-if="activeTab === 'debug'">
+        <template v-if="activeTab === 'debug'">
           <div class="sectionHeader codeHeading debugHeader">
             <div>
               <h2>Debug</h2>
