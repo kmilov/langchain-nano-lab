@@ -1,4 +1,5 @@
 import { tool } from "@langchain/core/tools";
+import { registerAgentTool } from "./routing";
 
 export type CalculatorInput = {
   a: number;
@@ -6,7 +7,7 @@ export type CalculatorInput = {
   operation: "add" | "subtract" | "multiply" | "divide";
 };
 
-export const calculatorTool = tool(
+const rawCalculatorTool = tool(
   async ({ a, b, operation }: CalculatorInput) => {
     switch (operation) {
       case "add":
@@ -39,3 +40,52 @@ export const calculatorTool = tool(
     },
   },
 );
+
+
+function parseCalculatorRoute(input: string): CalculatorInput | null {
+  const normalized = input
+    .toLowerCase()
+    .replace(/,/g, "")
+    .replace(/[×x*]/g, " multiply ")
+    .replace(/[÷/]/g, " divide ");
+
+  const patterns: Array<{
+    operation: CalculatorInput["operation"];
+    regex: RegExp;
+  }> = [
+    {
+      operation: "add",
+      regex: /(?:add|plus|sum of|what is)\s+(-?\d+(?:\.\d+)?)\s+(?:and|plus|\+)\s+(-?\d+(?:\.\d+)?)/i,
+    },
+    {
+      operation: "subtract",
+      regex: /(?:subtract|minus|what is)\s+(-?\d+(?:\.\d+)?)\s+(?:minus|-)\s+(-?\d+(?:\.\d+)?)/i,
+    },
+    {
+      operation: "multiply",
+      regex: /(?:multiply|what is)\s+(-?\d+(?:\.\d+)?)\s+(?:by\s+)?(?:multiply\s+)?(-?\d+(?:\.\d+)?)/i,
+    },
+    {
+      operation: "divide",
+      regex: /(?:divide|what is)\s+(-?\d+(?:\.\d+)?)\s+(?:by\s+)?(?:divide\s+)?(-?\d+(?:\.\d+)?)/i,
+    },
+  ];
+
+  for (const { operation, regex } of patterns) {
+    const match = normalized.match(regex);
+    if (!match) continue;
+
+    return {
+      a: Number(match[1]),
+      b: Number(match[2]),
+      operation,
+    };
+  }
+
+  return null;
+}
+
+export const calculatorTool = registerAgentTool(rawCalculatorTool, {
+  mode: "required",
+  route: parseCalculatorRoute,
+});
