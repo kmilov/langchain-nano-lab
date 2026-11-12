@@ -147,6 +147,17 @@ const routingCode = `for (const registered of registeredTools) {
   }
 }`;
 
+const plannerCode = `const plan = await planTools(input, workingMessages);
+
+if (plan?.steps.length) {
+  workingMessages = await executePlan(plan.steps, workingMessages);
+} else {
+  // v7 safety net
+  workingMessages =
+    await executeRequiredTool(input, workingMessages)
+    ?? workingMessages;
+}`;
+
 const persistenceCode = `const saved = localStorage.getItem(STORAGE_KEY);
 if (saved) {
   const state = JSON.parse(saved);
@@ -332,7 +343,7 @@ onMounted(async () => {
           </div>
           <div class="headerBadges">
             <span class="contextUsageLabel">{{ contextUsageLabel }}</span>
-            <span class="step">v7 · tool routing · {{ historySize }} msgs</span>
+            <span class="step">v8 · planner + executor · {{ historySize }} msgs</span>
             <button v-if="messages.length > 0" class="clearButton" @click="clearConversation">Clear chat</button>
           </div>
         </div>
@@ -385,7 +396,7 @@ onMounted(async () => {
           <div class="sectionHeader codeHeading">
             <div>
               <h2>Code</h2>
-              <p>v7 adds generic required-tool routing while keeping tool-specific matching outside the Harness.</p>
+              <p>v8 adds a Planner → Executor → Finalizer flow for multi-step and dependent tool use.</p>
             </div>
           </div>
 
@@ -395,18 +406,23 @@ onMounted(async () => {
           </section>
 
           <section class="codeBlock">
-            <div class="codeBar">2 · Tool routing · required policies before Nano</div>
+            <div class="codeBar">2 · Tool routing · v7 deterministic fallback</div>
             <pre><code>{{ routingCode }}</code></pre>
           </section>
 
           <section class="codeBlock">
-            <div class="codeBar">3 · Persistence · export / restore Harness state</div>
+            <div class="codeBar">3 · Planner · whole-turn decomposition</div>
+            <pre><code>{{ plannerCode }}</code></pre>
+          </section>
+
+          <section class="codeBlock">
+            <div class="codeBar">4 · Persistence · export / restore Harness state</div>
             <pre><code>{{ persistenceCode }}</code></pre>
           </section>
 
           <div class="nextSteps">
-            <span>v7 routing policy</span>
-            <strong>required tools are enforced by the Harness · ambiguous tools still stay model-driven</strong>
+            <span>v8 execution model</span>
+            <strong>planner understands the whole turn · executor runs ordered tool steps · Nano finalizes the answer</strong>
           </div>
         </template>
 
@@ -467,7 +483,7 @@ onMounted(async () => {
               open
             >
               <summary class="debugMeta">
-                <strong>{{ call.start?.kind === "summary" ? "Summary" : "LLM" }} Call #{{ call.callId }}</strong>
+                <strong>{{ call.start?.kind === "summary" ? "Summary" : call.start?.kind === "planner" ? "Planner" : "LLM" }} Call #{{ call.callId }}</strong>
                 <span>
                   {{ call.error ? "error" : call.end ? "complete" : "running" }}
                   · {{ call.start ? eventTime(call.start) : "" }}
