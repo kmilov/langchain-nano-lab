@@ -7,9 +7,16 @@ export type RequiredToolRoutingPolicy = {
 
 export type ToolRoutingPolicy = RequiredToolRoutingPolicy;
 
+export type ToolCapability = {
+  useFor: string[];
+  notFor?: string[];
+  accepts?: (input: string, args: Record<string, unknown>) => boolean;
+};
+
 export type RegisteredAgentTool = {
   tool: StructuredToolInterface;
   routing?: ToolRoutingPolicy;
+  capability?: ToolCapability;
 };
 
 export type AgentTool = StructuredToolInterface | RegisteredAgentTool;
@@ -17,8 +24,9 @@ export type AgentTool = StructuredToolInterface | RegisteredAgentTool;
 export function registerAgentTool(
   tool: StructuredToolInterface,
   routing?: ToolRoutingPolicy,
+  capability?: ToolCapability,
 ): RegisteredAgentTool {
-  return { tool, routing };
+  return { tool, routing, capability };
 }
 
 export function normalizeAgentTool(tool: AgentTool): RegisteredAgentTool {

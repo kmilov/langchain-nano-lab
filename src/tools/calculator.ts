@@ -86,7 +86,20 @@ function parseCalculatorRoute(input: string): CalculatorInput | null {
   return null;
 }
 
-export const calculatorTool = registerAgentTool(rawCalculatorTool, {
-  mode: "required",
-  route: parseCalculatorRoute,
-});
+export const calculatorTool = registerAgentTool(
+  rawCalculatorTool,
+  {
+    mode: "required",
+    route: parseCalculatorRoute,
+  },
+  {
+    useFor: [
+      "Basic arithmetic using two numeric values: add, subtract, multiply, or divide.",
+      "Arithmetic on numeric results produced by earlier tool steps.",
+    ],
+    notFor: [
+      "Looking up facts or numeric values that are not already available.",
+      "Population, weather, search, or other information retrieval.",
+    ],
+  },
+);
