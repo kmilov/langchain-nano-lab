@@ -29,6 +29,10 @@ export function plannerInstructions(tools: RegisteredAgentTool[]): string {
         lines.push(`Do NOT use for: ${capability.notFor.join(" | ")}`);
       }
 
+      if (capability?.groundedArgs?.length) {
+        lines.push(`Grounded arguments: ${capability.groundedArgs.join(", ")}`);
+      }
+
       return lines.join("\n");
     })
     .join("\n\n");
@@ -44,7 +48,9 @@ export function plannerInstructions(tools: RegisteredAgentTool[]): string {
     "If tools are needed, return a plan with one step per tool invocation.",
     'Shape: {"type":"plan","steps":[{"id":"step-1","tool":"<tool>","args":{...},"dependsOn":["step-0"]}]}',
     "Steps execute in array order.",
+    'For a grounded argument copied from the user, use exactly {"$value":<value>,"$source":"user"}.',
     'To use an earlier step result as an argument, use exactly {"$step":"step-id"} as that argument value.',
+    "Never invent a value for a grounded argument. A grounded argument must come from the user or an earlier step.",
     "When the user refers to a value produced by another step with phrases like \"the result\", \"that answer\", \"the solution\", \"the previous result\", or similar references, you MUST use a $step reference. Do not copy or reinterpret text from the user's request.",
     "Whenever a step uses a $step reference, also list that step id in dependsOn.",
     "A $step reference always means the raw result returned by that earlier tool step.",
