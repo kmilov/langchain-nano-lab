@@ -24,6 +24,11 @@ import {
   toolInstructions,
   type ToolCallRequest,
 } from "./tools/protocol";
+import {
+  parseToolPlan,
+  plannerInstructions,
+  type PlannedToolStep,
+} from "./planning";
 
 export const MAX_TOOL_STEPS = 5;
 export const CONTEXT_COMPACTION_THRESHOLD = 0.3;
@@ -54,7 +59,7 @@ export type ChatHarnessState = {
   summarizedMessageCount: number;
 };
 
-export type ModelCallKind = "agent" | "summary";
+export type ModelCallKind = "agent" | "summary" | "planner";
 
 export type HarnessEvent =
   | {
@@ -349,6 +354,97 @@ export class ChatHarness {
     ];
   }
 
+  private resolvePlanValue(
+    value: unknown,
+    results: Map<string, string>,
+  ): unknown {
+    if (Array.isArray(value)) {
+      return value.map((item) => this.resolvePlanValue(item, results));
+    }
+
+    if (value && typeof value === "object") {
+      const objectValue = value as Record<string, unknown>;
+      if (
+        Object.keys(objectValue).length === 1 &&
+        typeof objectValue.$step === "string"
+      ) {
+        const result = results.get(objectValue.$step);
+        if (result === undefined) {
+          throw new Error(`Plan references unavailable step: ${objectValue.$step}`);
+        }
+        return result;
+      }
+
+      return Object.fromEntries(
+        Object.entries(objectValue).map(([key, nested]) => [
+          key,
+          this.resolvePlanValue(nested, results),
+        ]),
+      );
+    }
+
+    return value;
+  }
+
+  private async planTools(input: string, workingMessages: BaseMessage[]) {
+    if (this.tools.length === 0) return null;
+
+    const plannerMessages: BaseMessage[] = [
+      new SystemMessage(plannerInstructions(this.tools)),
+      ...this.messagesForModel(workingMessages).filter(
+        (message) => message.getType() !== "system",
+      ),
+    ];
+
+    const call = await this.invokeModel(plannerMessages, "planner");
+    return parseToolPlan(call.response.content.toString());
+  }
+
+  private async executePlan(
+    steps: PlannedToolStep[],
+    workingMessages: BaseMessage[],
+  ) {
+    let messages = [...workingMessages];
+    const results = new Map<string, string>();
+
+    for (const step of steps) {
+      const args = this.resolvePlanValue(step.args, results) as Record<string, unknown>;
+      const callId = this.nextCallId++;
+      const toolMessage = await this.executeTool(
+        { type: "tool_call", tool: step.tool, args },
+        `tool-${callId}`,
+        callId,
+      );
+
+      const parsed = JSON.parse(toolMessage.content.toString()) as {
+        result?: unknown;
+        error?: unknown;
+      };
+      results.set(
+        step.id,
+        parsed.result !== undefined
+          ? String(parsed.result)
+          : parsed.error !== undefined
+            ? String(parsed.error)
+            : toolMessage.content.toString(),
+      );
+
+      messages = [
+        ...messages,
+        new AIMessage(
+          JSON.stringify({
+            type: "tool_call",
+            tool: step.tool,
+            args,
+          }),
+        ),
+        toolMessage,
+      ];
+    }
+
+    return messages;
+  }
+
   private async executeTool(
     toolCall: ToolCallRequest,
     toolCallId: string,
@@ -431,6 +527,15 @@ export class ChatHarness {
     if (requiredMessages) {
       workingMessages = requiredMessages;
       toolSteps += 1;
+    } else {
+      const plan = await this.planTools(input, workingMessages);
+      if (plan && plan.steps.length > 0) {
+        if (plan.steps.length > MAX_TOOL_STEPS) {
+          throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
+        }
+        workingMessages = await this.executePlan(plan.steps, workingMessages);
+        toolSteps = plan.steps.length;
+      }
     }
 
     while (true) {
@@ -467,6 +572,15 @@ export class ChatHarness {
     if (requiredMessages) {
       workingMessages = requiredMessages;
       toolSteps += 1;
+    } else {
+      const plan = await this.planTools(input, workingMessages);
+      if (plan && plan.steps.length > 0) {
+        if (plan.steps.length > MAX_TOOL_STEPS) {
+          throw new Error(`Tool step limit reached (${MAX_TOOL_STEPS}).`);
+        }
+        workingMessages = await this.executePlan(plan.steps, workingMessages);
+        toolSteps = plan.steps.length;
+      }
     }
 
     while (true) {
