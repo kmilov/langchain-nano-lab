@@ -371,3 +371,141 @@ pre {
   .composer { grid-template-columns: 1fr; }
   .composer button { width: 100%; }
 }
+
+
+.testActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.testRunButton {
+  border: 0;
+  border-radius: 9px;
+  background: #1769e8;
+  color: white;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 750;
+}
+.testRunButton:disabled { opacity: .45; cursor: default; }
+.testSummary {
+  margin: 14px 14px 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.testSummary > div {
+  border: 1px solid #dfe4ec;
+  border-radius: 11px;
+  background: white;
+  padding: 10px 12px;
+  display: grid;
+  gap: 2px;
+}
+.testSummary span {
+  color: #7d8591;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+.testSummary strong { font-size: 18px; }
+.testFeed {
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+.testCard {
+  border: 1px solid #dfe4ec;
+  border-radius: 12px;
+  background: white;
+  overflow: hidden;
+}
+.test-pass { border-color: #a8dfb9; }
+.test-fail, .test-error { border-color: #f0b7b7; }
+.test-running { border-color: #a9c5f5; }
+.testCardHeader {
+  padding: 10px 12px;
+  border-bottom: 1px solid #edf0f4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.testCardHeader strong { font-size: 12px; }
+.testCardMeta { display: flex; align-items: center; gap: 7px; }
+.testStatus {
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  font-size: 9px;
+  font-weight: 850;
+  color: #7a8390;
+}
+.test-pass .testStatus { color: #198846; }
+.test-fail .testStatus, .test-error .testStatus { color: #bd3f3f; }
+.test-running .testStatus { color: #2164da; }
+.testRemoveButton {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 7px;
+  background: #f1f4f8;
+  color: #687180;
+  font-size: 16px;
+  line-height: 1;
+}
+.testRemoveButton:disabled { opacity: .4; cursor: default; }
+.testField {
+  padding: 10px 12px 0;
+  display: grid;
+  gap: 6px;
+}
+.testField > span, .testResult > span {
+  color: #747d89;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+.testField textarea,
+.testField input {
+  width: 100%;
+  border: 1px solid #d9dfe8;
+  border-radius: 9px;
+  background: #fbfcfe;
+  color: #101318;
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.testField textarea { resize: vertical; min-height: 68px; }
+.testField textarea:focus,
+.testField input:focus {
+  border-color: #9dbbf6;
+  box-shadow: 0 0 0 3px rgba(62, 117, 220, .08);
+}
+.testResult {
+  margin-top: 10px;
+  border-top: 1px solid #edf0f4;
+  padding: 10px 12px 12px;
+}
+.testResult pre {
+  margin-top: 7px;
+  border-radius: 8px;
+  max-height: 130px;
+}
+.testResult p {
+  margin: 8px 0 0;
+  color: #66707e;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.test-pass .testResult p { color: #267748; }
+.test-fail .testResult p, .test-error .testResult p { color: #a83f3f; }
+
+@media (max-width: 620px) {
+  .testSummary { grid-template-columns: 1fr; }
+  .testActions { width: 100%; justify-content: flex-end; }
+}

@@ -26,7 +26,16 @@ type PersistedAppState = {
   harness: ChatHarnessState;
   messages: ChatMessage[];
 };
-type SideTab = "code" | "debug";
+type SideTab = "code" | "debug" | "test";
+type TestStatus = "idle" | "running" | "pass" | "fail" | "error";
+type TestCase = {
+  id: number;
+  prompt: string;
+  expected: string;
+  status: TestStatus;
+  actual: string;
+  detail: string;
+};
 type ModelParamsStatus = "loading" | "available" | "unsupported" | "error";
 type DebugCall = {
   callId: number;
@@ -56,6 +65,33 @@ const debugEvents = ref<HarnessEvent[]>([]);
 const modelParamsStatus = ref<ModelParamsStatus>("loading");
 const modelParams = ref<Record<string, unknown> | null>(null);
 const modelParamsError = ref("");
+const testRunning = ref(false);
+const testCases = ref<TestCase[]>([
+  {
+    id: 1,
+    prompt: "What is 14 + 6, and what is 30 - 11?",
+    expected: "20",
+    status: "idle",
+    actual: "",
+    detail: "Expected answer must contain this text.",
+  },
+  {
+    id: 2,
+    prompt: 'Count the words in "the quick brown fox jumps over the lazy dog".',
+    expected: "9",
+    status: "idle",
+    actual: "",
+    detail: "Expected answer must contain this text.",
+  },
+  {
+    id: 3,
+    prompt: "How many letters are in the word banana?",
+    expected: "execution could not proceed",
+    status: "idle",
+    actual: "",
+    detail: "This probes an unsupported capability boundary.",
+  },
+]);
 
 harness.subscribe((event) => {
   if (event.type !== "llm_chunk") {
@@ -106,6 +142,19 @@ const debugCalls = computed<DebugCall[]>(() => {
   }
 
   return [...calls.values()];
+});
+
+const testSummary = computed(() => {
+  const finished = testCases.value.filter((test) =>
+    ["pass", "fail", "error"].includes(test.status),
+  );
+  const passed = finished.filter((test) => test.status === "pass").length;
+  return {
+    passed,
+    failed: finished.length - passed,
+    total: testCases.value.length,
+    finished: finished.length,
+  };
 });
 
 const compactionEvents = computed(() =>
@@ -301,6 +350,116 @@ function clearDebug() {
   debugEvents.value = [];
 }
 
+function normalizeEvalText(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function evaluateTest(actual: string, expected: string) {
+  const normalizedActual = normalizeEvalText(actual);
+  const normalizedExpected = normalizeEvalText(expected);
+
+  if (!normalizedExpected) {
+    return { pass: false, detail: "Expected output is empty." };
+  }
+
+  if (normalizedActual.includes(normalizedExpected)) {
+    return { pass: true, detail: `Found expected text: "${expected}"` };
+  }
+
+  return {
+    pass: false,
+    detail: `Expected output to contain "${expected}", but it did not.`,
+  };
+}
+
+function resetTests() {
+  for (const test of testCases.value) {
+    test.status = "idle";
+    test.actual = "";
+    test.detail = "Expected answer must contain this text.";
+  }
+}
+
+function addTestCase() {
+  const nextId = Math.max(0, ...testCases.value.map((test) => test.id)) + 1;
+  testCases.value.push({
+    id: nextId,
+    prompt: "",
+    expected: "",
+    status: "idle",
+    actual: "",
+    detail: "Expected answer must contain this text.",
+  });
+}
+
+function removeTestCase(id: number) {
+  if (testRunning.value) return;
+  testCases.value = testCases.value.filter((test) => test.id !== id);
+}
+
+async function runTestSuite() {
+  if (testRunning.value || !ready.value) return;
+
+  testRunning.value = true;
+  resetTests();
+  harness.clear();
+  messages.value = [];
+  debugEvents.value = [];
+  refreshHarnessState();
+  await scrollToBottom();
+
+  for (const test of testCases.value) {
+    const prompt = test.prompt.trim();
+    const expected = test.expected.trim();
+
+    if (!prompt || !expected) {
+      test.status = "error";
+      test.detail = "Prompt and expected output are required.";
+      continue;
+    }
+
+    const evalHarness = new ChatHarness(model, [calculatorTool, wordCountTool]);
+    evalHarness.subscribe((event) => {
+      if (event.type !== "llm_chunk") debugEvents.value.push(event);
+    });
+
+    test.status = "running";
+    test.actual = "";
+    test.detail = "Waiting for Nano…";
+
+    messages.value.push({ role: "user", content: prompt });
+    const assistantIndex =
+      messages.value.push({ role: "assistant", content: "" }) - 1;
+    await scrollToBottom();
+
+    try {
+      const response = await evalHarness.stream(prompt, (chunk) => {
+        test.actual += chunk;
+        messages.value[assistantIndex].content += chunk;
+        void scrollToBottom();
+      });
+
+      test.actual = response.content.toString().trimEnd();
+      messages.value[assistantIndex].content = test.actual;
+
+      const evaluation = evaluateTest(test.actual, expected);
+      test.status = evaluation.pass ? "pass" : "fail";
+      test.detail = evaluation.detail;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      test.status = "error";
+      test.actual = detail;
+      test.detail = `Test execution failed: ${detail}`;
+      messages.value[assistantIndex] = { role: "error", content: detail };
+    }
+
+    await scrollToBottom();
+  }
+
+  testRunning.value = false;
+}
+
+
 function onComposerKeydown(event: KeyboardEvent) {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
@@ -390,6 +549,7 @@ onMounted(async () => {
         <div class="sideTabs">
           <button :class="{ active: activeTab === 'code' }" @click="activeTab = 'code'">Code</button>
           <button :class="{ active: activeTab === 'debug' }" @click="activeTab = 'debug'">Debug</button>
+          <button :class="{ active: activeTab === 'test' }" @click="activeTab = 'test'">Test</button>
         </div>
 
         <template v-if="activeTab === 'code'">
@@ -426,7 +586,7 @@ onMounted(async () => {
           </div>
         </template>
 
-        <template v-else>
+        <template v-else-if="activeTab === 'debug'">
           <div class="sectionHeader codeHeading debugHeader">
             <div>
               <h2>Debug</h2>
@@ -522,6 +682,76 @@ onMounted(async () => {
 
               <pre v-if="call.error" class="errorText">{{ call.error.error }}</pre>
             </details>
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="sectionHeader codeHeading debugHeader">
+            <div>
+              <h2>Test</h2>
+              <p>Run repeatable prompts against Nano and compare each response with an expected result.</p>
+            </div>
+            <div class="testActions">
+              <button class="clearButton" :disabled="testRunning" @click="addTestCase">Add case</button>
+              <button class="testRunButton" :disabled="testRunning || !ready || testCases.length === 0" @click="runTestSuite">
+                {{ testRunning ? "Running…" : "Run tests" }}
+              </button>
+            </div>
+          </div>
+
+          <div class="testSummary">
+            <div>
+              <span>Passed</span>
+              <strong>{{ testSummary.passed }}</strong>
+            </div>
+            <div>
+              <span>Failed</span>
+              <strong>{{ testSummary.failed }}</strong>
+            </div>
+            <div>
+              <span>Completed</span>
+              <strong>{{ testSummary.finished }}/{{ testSummary.total }}</strong>
+            </div>
+          </div>
+
+          <div class="testFeed">
+            <section
+              v-for="(test, index) in testCases"
+              :key="test.id"
+              class="testCard"
+              :class="`test-${test.status}`"
+            >
+              <div class="testCardHeader">
+                <strong>Eval {{ index + 1 }}</strong>
+                <div class="testCardMeta">
+                  <span class="testStatus">{{ test.status }}</span>
+                  <button
+                    class="testRemoveButton"
+                    :disabled="testRunning"
+                    title="Remove test"
+                    @click="removeTestCase(test.id)"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+
+              <label class="testField">
+                <span>Prompt</span>
+                <textarea v-model="test.prompt" rows="3" :disabled="testRunning" />
+              </label>
+
+              <label class="testField">
+                <span>Expected answer contains</span>
+                <input v-model="test.expected" :disabled="testRunning" />
+              </label>
+
+              <div v-if="test.status !== 'idle'" class="testResult">
+                <span>Actual output</span>
+                <pre>{{ test.actual || "Waiting…" }}</pre>
+                <p>{{ test.detail }}</p>
+              </div>
+            </section>
           </div>
         </template>
       </aside>
