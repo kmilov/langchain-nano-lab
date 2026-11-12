@@ -12,6 +12,11 @@ export type ToolPlan = {
   steps: PlannedToolStep[];
 };
 
+export type PlanningResult =
+  | { status: "valid"; plan: ToolPlan }
+  | { status: "empty"; plan: ToolPlan }
+  | { status: "invalid"; reason: string; raw: string };
+
 export function plannerInstructions(tools: RegisteredAgentTool[]): string {
   const descriptions = tools
     .map(({ tool, capability }) => {
@@ -46,15 +51,14 @@ export function plannerInstructions(tools: RegisteredAgentTool[]): string {
     "Return ONLY valid JSON. Do not use Markdown.",
     'If no tool is needed, return: {"type":"plan","steps":[]}',
     "If tools are needed, return a plan with one step per tool invocation.",
-    'Shape: {"type":"plan","steps":[{"id":"step-1","tool":"<tool>","args":{...},"dependsOn":["step-0"]}]}',
+    'Shape: {"type":"plan","steps":[{"id":"step-1","tool":"<tool>","args":{...}}]}',
     "Steps execute in array order.",
     "For grounded arguments copied from the user, use the literal value directly in args.",
     'Example: {"tool":"calculator","args":{"a":18,"b":7,"operation":"add"}}',
     'To use an earlier step result as an argument, use exactly {"$step":"step-id"} as that argument value.',
-    'Example dependency: {"tool":"word_count","args":{"text":{"$step":"step-1"}},"dependsOn":["step-1"]}',
+    'Example dependency: {"tool":"word_count","args":{"text":{"$step":"step-1"}}}',
     "Never invent a value for a grounded argument. A grounded literal must appear in the user\'s request; otherwise use an earlier $step result.",
     "When the user refers to a value produced by another step with phrases like \"the result\", \"that answer\", \"the solution\", \"the previous result\", or similar references, you MUST use a $step reference. Do not copy or reinterpret text from the user's request.",
-    "Whenever a step uses a $step reference, also list that step id in dependsOn.",
     "A $step reference always means the raw result returned by that earlier tool step.",
     "Do not invent literal argument text when the requested value should come from another planned step.",
     "Never calculate, count, search, or otherwise perform tool work inside the plan.",
@@ -119,16 +123,28 @@ function parsePlanJson(text: string): ToolPlan | null {
   }
 }
 
-export function parseToolPlan(content: string): ToolPlan | null {
+export function parseToolPlan(content: string): PlanningResult {
   const text = content.trim();
   const direct = parsePlanJson(text);
-  if (direct) return direct;
-
-  const fencedBlocks = text.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi);
-  for (const match of fencedBlocks) {
-    const embedded = parsePlanJson(match[1]);
-    if (embedded) return embedded;
+  if (direct) {
+    return direct.steps.length === 0
+      ? { status: "empty", plan: direct }
+      : { status: "valid", plan: direct };
   }
 
-  return null;
+  const fencedBlocks = text.matchAll(/\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`/gi);
+  for (const match of fencedBlocks) {
+    const embedded = parsePlanJson(match[1]);
+    if (embedded) {
+      return embedded.steps.length === 0
+        ? { status: "empty", plan: embedded }
+        : { status: "valid", plan: embedded };
+    }
+  }
+
+  return {
+    status: "invalid",
+    reason: "Planner output was not a valid tool plan.",
+    raw: content,
+  };
 }
